@@ -4,7 +4,7 @@ Simple static frontend + Node/Express proxy to visualize MikroTik Kid Control sc
 
 This repository contains:
 
-- `index.html` - frontend (Vega-Lite) that fetches `/api/kid-control` by default
+- `index.html` - frontend (Vega-Lite) that fetches `/api/kid-control` by default. The UI no longer has fields for API URL/username/password — these values are supplied to the server via the `.env` file used by the `proxy` service.
 - `Dockerfile` - nginx image to serve frontend and proxy `/api/` requests to the proxy service
 - `proxy/` - Node/Express proxy that fetches data from MikroTik and returns JSON
 - `docker-compose.yml` - compose file to run both services
@@ -12,7 +12,7 @@ This repository contains:
 
 ## Quickstart (Raspberry Pi)
 
-1. Copy `.env.example` to `.env` and edit `BASIC_AUTH` to your real credentials in the form `Basic <base64(user:pass)>`.
+1. Copy `.env.example` to `.env` and edit `TARGET` and `BASIC_AUTH` to point to your MikroTik REST endpoint and credentials. The frontend will always call the local proxy at `/api/kid-control` (no client-side credential inputs).
 
 2. Build and run (ensure Docker and docker compose plugin are installed):
 
@@ -57,7 +57,7 @@ docker compose up -d --build
 
 4) Откройте в браузере: `http://<IP_вашего_pi>:3030`.
 
-Фронтенд по умолчанию использует адрес `/api/kid-control` (поле "Адрес API" в UI). Nginx проксирует этот путь на `proxy`, а `proxy` делает запрос к устройству MikroTik.
+Фронтенд использует локальный прокси `/api/kid-control`. Все параметры (TARGET, BASIC_AUTH) задаются в `.env` и обрабатываются сервером (proxy). Это предотвращает утечку учётных данных в браузер или localStorage.
 
 ## Генерация `BASIC_AUTH` (подробно)
 
