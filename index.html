@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MikroTik Kid Control Gantt Chart</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .controls {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .error {
+            color: #dc3545;
+            text-align: center;
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 5px;
+        }
+        
+        .gantt-chart {
+            margin-top: 30px;
+        }
+        
+        .user-schedule {
+            margin-bottom: 30px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        
+        .user-header {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .user-status {
+            margin-left: 10px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: normal;
+        }
+        
+        .status-enabled {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .status-blocked {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-paused {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .day-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 15px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .day-row:last-child {
+            border-bottom: none;
+        }
+        
+        .day-label {
+            width: 80px;
+            font-weight: bold;
+            color: #666;
+        }
+        
+        .time-bar {
+            flex: 1;
+            height: 30px;
+            position: relative;
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 3px;
+            margin-left: 10px;
+        }
+        
+        .time-block {
+            position: absolute;
+            height: 100%;
+            background-color: #28a745;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            box-sizing: border-box;
+        }
+        
+        .time-axis {
+            margin: 10px 0 10px 90px;
+            height: 20px;
+            position: relative;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .time-marker {
+            position: absolute;
+            height: 15px;
+            border-left: 1px solid #999;
+            font-size: 10px;
+            color: #666;
+            padding-left: 2px;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MikroTik Kid Control Schedule</h1>
+        
+        <div class="controls">
+            <label>
+                Адрес API:
+                <input id="apiUrl" type="text" value="/api/kid-control" placeholder="http://192.168.88.254/rest/ip/kid-control" style="width:320px; margin-left:8px;">
+            </label>
+            <br style="margin:6px 0;">
+            <label>
+                Пользователь:
+                <input id="apiUser" type="text" placeholder="kidreader" style="margin-left:8px;">
+            </label>
+            <label style="margin-left:12px;">
+                Пароль:
+                <input id="apiPass" type="password" placeholder="password" style="margin-left:8px;">
+            </label>
+            <br style="margin:8px 0;">
+            <button id="loadData" onclick="loadScheduleData()">Загрузить расписание</button>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="loading" class="loading" style="display: none;">Загрузка данных...</div>
+        <div id="ganttChart" class="gantt-chart"></div>
+    </div>
+
+    <script>
+        // API connection values are provided by the user via inputs
+
+        const DAYS = {
+            'mon': 'Понедельник',
+            'tue': 'Вторник',
+            'wed': 'Среда',
+            'thu': 'Четверг',
+            'fri': 'Пятница',
+            'sat': 'Суббота',
+            'sun': 'Воскресенье'
+        };
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function prefillInputs() {
+            try {
+                const savedUrl = localStorage.getItem('kidctrl_apiUrl');
+                const savedUser = localStorage.getItem('kidctrl_apiUser');
+                if (savedUrl) document.getElementById('apiUrl').value = savedUrl;
+                if (savedUser) document.getElementById('apiUser').value = savedUser;
+            } catch (e) {
+                console.warn('Не удалось прочитать localStorage', e.message);
+            }
+        }
+
+        async function loadScheduleData() {
+            hideError();
+            showLoading();
+
+            const loadButton = document.getElementById('loadData');
+            loadButton.disabled = true;
+
+            try {
+                // Read and sanitize inputs
+                let apiUrl = document.getElementById('apiUrl').value.trim();
+                const apiUser = document.getElementById('apiUser').value.trim();
+                const apiPass = document.getElementById('apiPass').value;
+
+                // Remove surrounding quotes if user pasted them by accident
+                apiUrl = apiUrl.replace(/^['"]+|['"]+$/g, '');
+
+                // Default to local proxy if empty
+                if (!apiUrl) apiUrl = '/api/kid-control';
+
+                // Detect external URL patterns and force proxy usage for safety
+                const isExternal = /^https?:\/\//i.test(apiUrl) || apiUrl.startsWith('//') || (/^[0-9]+\./.test(apiUrl)) || (apiUrl.includes(':') && !apiUrl.startsWith('/'));
+                if (isExternal) {
+                    // External addresses must not be contacted directly from the browser.
+                    // Silently force use of the local proxy to avoid alarming the user.
+                    console.info('External API address detected — forcing local proxy /api/kid-control');
+                    apiUrl = '/api/kid-control';
+                }
+
+                try {
+                    localStorage.setItem('kidctrl_apiUrl', apiUrl);
+                    localStorage.setItem('kidctrl_apiUser', apiUser);
+                } catch (e) {
+                    console.warn('Не удалось сохранить настройки в localStorage', e.message);
+                }
+
+                let data;
+                try {
+                    const headers = { 'Content-Type': 'application/json' };
+                    // Only send Authorization from browser when calling an explicit remote URL
+                    if (!apiUrl.startsWith('/') && apiUser) {
+                        headers['Authorization'] = 'Basic ' + btoa(apiUser + ':' + apiPass);
+                    }
+
+                    console.log('headers:', headers);
+
+                    const response = await fetch(apiUrl, { method: 'GET', headers, mode: 'cors' });
+                    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    data = await response.json();
+                    console.log('Данные получены из API:', data);
+                } catch (apiError) {
+                    console.warn('Не удалось загрузить данные из API:', apiError.message);
+                    console.warn('Используем демонстрационные данные');
+                    data = [
+                        {
+                            ".id": "*3",
+                            "blocked": "true",
+                            "disabled": "false",
+                            "fri": "7h-7h45m,14h40m-17h20m,21h-23h",
+                            "mon": "7h-7h45m,15h-16h30m,19h30m-22h",
+                            "name": "Vlad",
+                            "paused": "false",
+                            "rate-limit": "",
+                            "sat": "7h-23h59m",
+                            "sun": "9h-16h,20h-22h30m",
+                            "thu": "6h-7h50m,15h-17h,20h-22h",
+                            "tue": "7h-7h45m,15h-16h30m,19h-22h",
+                            "wed": "7h-7h45m,15h-17h,19h-22h"
+                        }
+                    ];
+                    showError('CORS ошибка или недоступен API: Используются демонстрационные данные. Для работы с реальным API необходим прокси-сервер.');
+                }
+
+                renderGanttChart(data);
+            } catch (error) {
+                showError('Ошибка загрузки данных: ' + error.message);
+            } finally {
+                hideLoading();
+                loadButton.disabled = false;
+            }
+        }
+
+        function parseTimeRange(timeStr) {
+            if (!timeStr || timeStr === '') return [];
+            const ranges = timeStr.split(',');
+            return ranges.map(range => {
+                const [start, end] = range.split('-');
+                return {
+                    start: parseTime(start),
+                    end: parseTime(end),
+                    label: `${start}-${end}`
+                };
+            });
+        }
+
+        function parseTime(timeStr) {
+            const match = timeStr.match(/(\d+)h(?:(\d+)m)?/);
+            if (!match) return 0;
+            const hours = parseInt(match[1]);
+            const minutes = parseInt(match[2] || 0);
+            return hours * 60 + minutes; // в минутах
+        }
+
+        function minutesToPercent(minutes) {
+            return (minutes / (24 * 60)) * 100;
+        }
+
+        // Render Gantt using Vega-Lite (vega-embed)
+        async function renderGanttChart(data) {
+            const chartDiv = document.getElementById('ganttChart');
+            chartDiv.innerHTML = '';
+
+            const activeUsers = Array.isArray(data) ? data.filter(user => user.disabled === "false") : [];
+            if (activeUsers.length === 0) {
+                chartDiv.innerHTML = '<p style="text-align: center; color: #666;">Нет активных пользователей</p>';
+                return;
+            }
+
+            const events = [];
+            const refYear = 2020, refMonth = 0, refDay = 1;
+            // Для порядка дней используем DAYS в порядке ключей
+            const dayKeysOrdered = ['mon','tue','wed','thu','fri','sat','sun'];
+
+            activeUsers.forEach(user => {
+                dayKeysOrdered.forEach(dayKey => {
+                    const dayName = DAYS[dayKey];
+                    const dayValue = user[dayKey];
+                    if (!dayValue) return;
+                    const ranges = parseTimeRange(dayValue);
+                    ranges.forEach(r => {
+                        const startHours = Math.floor(r.start / 60);
+                        const startMins = r.start % 60;
+                        const endHours = Math.floor(r.end / 60);
+                        const endMins = r.end % 60;
+                        const startDate = new Date(refYear, refMonth, refDay, startHours, startMins);
+                        const endDate = new Date(refYear, refMonth, refDay, endHours, endMins);
+                        events.push({
+                            user: user.name,
+                            day: dayName,
+                            row: `${user.name} — ${dayName}`,
+                            start: startDate,
+                            end: endDate,
+                            label: r.label
+                        });
+                    });
+                });
+            });
+
+            if (events.length === 0) {
+                chartDiv.innerHTML = '<p style="text-align: center; color: #666;">У активных пользователей нет расписаний</p>';
+                return;
+            }
+
+            const domain = [];
+            activeUsers.forEach(u => {
+                dayKeysOrdered.forEach(k => domain.push(`${u.name} — ${DAYS[k]}`));
+            });
+
+            const spec = {
+                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                "description": "Gantt chart for MikroTik Kid Control schedules",
+                "width": 900,
+                "height": 30 * domain.length,
+                "data": { "values": events },
+                "mark": "bar",
+                "encoding": {
+                    "x": { "field": "start", "type": "temporal", "title": null, "axis": { "format": "%H:%M", "tickCount": 13 } },
+                    "x2": { "field": "end" },
+                    "y": { "field": "row", "type": "ordinal", "title": null, "axis": { "labelAngle": 0 }, "sort": domain },
+                    "color": { "value": "rgba(144,238,144,0.6)" },
+                    "tooltip": [
+                        { "field": "user", "type": "nominal", "title": "Пользователь" },
+                        { "field": "day", "type": "nominal", "title": "День" },
+                        { "field": "label", "type": "nominal", "title": "Период" },
+                        { "field": "start", "type": "temporal", "title": "Начало", "format": "%H:%M" },
+                        { "field": "end", "type": "temporal", "title": "Окончание", "format": "%H:%M" }
+                    ]
+                },
+                "config": { "view": { "stroke": "transparent" } }
+            };
+
+            const visDiv = document.createElement('div');
+            visDiv.id = 'vegaVis';
+            chartDiv.appendChild(visDiv);
+
+            if (typeof vegaEmbed === 'undefined') {
+                const s1 = document.createElement('script');
+                s1.src = 'https://cdn.jsdelivr.net/npm/vega@5';
+                s1.onload = () => {
+                    const s2 = document.createElement('script');
+                    s2.src = 'https://cdn.jsdelivr.net/npm/vega-lite@5';
+                    s2.onload = () => {
+                        const s3 = document.createElement('script');
+                        s3.src = 'https://cdn.jsdelivr.net/npm/vega-embed@6';
+                        s3.onload = () => {
+                            window.vegaEmbed('#vegaVis', spec, { actions: false });
+                        };
+                        document.head.appendChild(s3);
+                    };
+                    document.head.appendChild(s2);
+                };
+                document.head.appendChild(s1);
+            } else {
+                window.vegaEmbed('#vegaVis', spec, { actions: false });
+            }
+        }
+
+        window.addEventListener('load', () => {
+            prefillInputs();
+            loadScheduleData();
+        });
+    </script>
+</body>
+</html>

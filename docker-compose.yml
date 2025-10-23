@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  web:
+    build: .
+    ports:
+      - "3030:80"
+    restart: unless-stopped
+    volumes:
+      - ./:/usr/share/nginx/html:ro
+  proxy:
+    build: ./proxy
+    restart: unless-stopped
+    env_file:
+      - .env
