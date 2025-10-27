@@ -385,6 +385,8 @@
             });
 
             const stepHeight = 30;
+            const now = new Date();
+            const nowMarker = new Date(refYear, refMonth, refDay, now.getHours(), now.getMinutes(), now.getSeconds());
             const spec = {
                 "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
                 "description": "Gantt chart for MikroTik Kid Control schedules",
@@ -392,20 +394,39 @@
                 // use step-based height so number of rows determines height automatically
                 "height": { "step": stepHeight },
                 "data": { "values": events },
-                "mark": "bar",
-                "encoding": {
-                    "x": { "field": "start", "type": "temporal", "title": null, "axis": { "format": "%H:%M", "tickCount": 8, "labelAngle": 0, "labelFontSize": 11 } },
-                    "x2": { "field": "end" },
-                    "y": { "field": "row", "type": "ordinal", "title": null, "axis": { "labelAngle": 0, "labelFontSize": 12 }, "sort": domain },
-                    "color": { "value": "rgba(144,238,144,0.85)" },
-                    "tooltip": [
-                        { "field": "user", "type": "nominal", "title": "Пользователь" },
-                        { "field": "day", "type": "nominal", "title": "День" },
-                        { "field": "label", "type": "nominal", "title": "Период" },
-                        { "field": "start", "type": "temporal", "title": "Начало", "format": "%H:%M" },
-                        { "field": "end", "type": "temporal", "title": "Окончание", "format": "%H:%M" }
-                    ]
-                },
+                "layer": [
+                    {
+                        "mark": "bar",
+                        "encoding": {
+                            "x": { "field": "start", "type": "temporal", "title": null, "axis": { "format": "%H:%M", "tickCount": 8, "labelAngle": 0, "labelFontSize": 11 } },
+                            "x2": { "field": "end" },
+                            "y": { "field": "row", "type": "ordinal", "title": null, "axis": { "labelAngle": 0, "labelFontSize": 12 }, "sort": domain },
+                            "color": { "value": "rgba(144,238,144,0.85)" },
+                            "tooltip": [
+                                { "field": "user", "type": "nominal", "title": "Пользователь" },
+                                { "field": "day", "type": "nominal", "title": "День" },
+                                { "field": "label", "type": "nominal", "title": "Период" },
+                                { "field": "start", "type": "temporal", "title": "Начало", "format": "%H:%M" },
+                                { "field": "end", "type": "temporal", "title": "Окончание", "format": "%H:%M" }
+                            ]
+                        }
+                    },
+                    {
+                        "data": { "values": [{ "now": nowMarker }] },
+                        "mark": { "type": "rule", "color": "#377eb9", "strokeDash": [4, 4], "size": 2, "opacity": 0.85 },
+                        "encoding": {
+                            "x": { "field": "now", "type": "temporal" }
+                        }
+                    },
+                    {
+                        "data": { "values": [{ "now": nowMarker, "label": "Сейчас" }] },
+                        "mark": { "type": "text", "angle": 90, "align": "left", "baseline": "bottom", "dx": 10, "dy": -4, "color": "#377eb9", "fontSize": 11, "opacity": 0.7 },
+                        "encoding": {
+                            "x": { "field": "now", "type": "temporal" },
+                            "text": { "field": "label", "type": "nominal" }
+                        }
+                    }
+                ],
                 "config": { "view": { "stroke": "transparent" }, "axis": { "labelFont": "Arial", "titleFont": "Arial" } }
             };
 
