@@ -1,158 +1,132 @@
 # MikroTik Kid Control Gantt
 
-Simple static frontend + Node/Express proxy to visualize MikroTik Kid Control schedules as a Gantt chart.
+Static web UI backed by a Node/Express proxy for visualising MikroTik Kid Control schedules as a Gantt chart.
 
-This repository contains:
+## Repository contents
 
-- `index.html` - frontend (Vega-Lite) that fetches `/api/kid-control` by default. The UI no longer has fields for API URL/username/password — these values are supplied to the server via the `.env` file used by the `proxy` service.
-- `Dockerfile` - nginx image to serve frontend and proxy `/api/` requests to the proxy service
-- `proxy/` - Node/Express proxy that fetches data from MikroTik and returns JSON
-- `docker-compose.yml` - compose file to run both services
-- `.env.example` - example environment file for proxy
+- `index.html` — Vega-Lite frontend that fetches `/api/kid-control`.
+- `Dockerfile` — Nginx image serving the frontend and proxying `/api/` requests to the proxy service.
+- `proxy/` — Node/Express proxy that calls the MikroTik REST endpoint and returns JSON.
+- `docker-compose.yml` — compose definition for the `web` (nginx) and `proxy` services.
+- `.env.example` — sample environment file for the proxy.
 
-## Quickstart (Raspberry Pi)
+## Architecture
 
-1. Copy `.env.example` to `.env` and edit `TARGET` and `BASIC_AUTH` to point to your MikroTik REST endpoint and credentials. The frontend will always call the local proxy at `/api/kid-control` (no client-side credential inputs).
+Nginx (exposed on port 3030) serves the static files and forwards `/api/*` requests to the internal `proxy` service. The proxy performs HTTP requests to the MikroTik router and returns the result as JSON. Because the browser only talks to Nginx, all traffic stays same-origin and CORS is avoided.
 
-2. Build and run (ensure Docker and docker compose plugin are installed):
+## Quick start (Raspberry Pi)
 
-```bash
-docker compose up -d --build
-```
+1. Copy the sample environment file and populate the values:
 
-3. Open the frontend in your browser:
+   ```bash
+   cp .env.example .env
+   ```
 
-```
-# MikroTik Kid Control Gantt
+2. Set the `TARGET` URL (MikroTik REST endpoint) and `BASIC_AUTH` header value in `.env` (see the section below on generating it).
 
-Статический фронтенд (Vega-Lite) + Node/Express proxy для визуализации расписаний MikroTik Kid Control в виде диаграммы Ганта.
+3. Build and start the containers (Docker Engine and the docker compose plugin must be installed):
 
-## Что в репозитории
+   ```bash
+   docker compose up -d --build
+   ```
 
-- `index.html` — фронтенд. По умолчанию запрашивает `/api/kid-control`.
-- `Dockerfile` — образ Nginx для отдачи фронтенда и проксирования `/api/` на сервис `proxy`.
-- `proxy/` — Node/Express proxy, делает запрос к MikroTik и возвращает JSON.
-- `docker-compose.yml` — запускает `web` (nginx) и `proxy` сервисы.
-- `.env.example` — пример файла с переменными окружения для `proxy`.
+4. Open the UI in your browser at `http://<your-pi-ip>:3030`.
 
-## Коротко как это работает
+The frontend always talks to the local proxy at `/api/kid-control`. All sensitive values are provided via `.env` and handled on the server side so no credentials ever reach the browser or local storage.
 
-Nginx (порт 3030) отдаёт фронтенд и проксирует `/api/*` на `proxy` (внутренний сервис). `proxy` выполняет HTTP-запрос к MikroTik и возвращает JSON. Браузер общается same-origin с nginx — проблем с CORS нет.
+## Generate `BASIC_AUTH`
 
-## Быстрый старт (Raspberry Pi)
-
-1) Скопируйте шаблон `.env.example` в `.env` и заполните значения.
-
-```bash
-cp .env.example .env
-```
-
-2) Сгенерируйте значение для `BASIC_AUTH` в формате `Basic <base64(username:password)>` (см. раздел ниже).
-
-3) Соберите и запустите контейнеры (на Pi должны быть Docker и docker compose plugin):
-
-```bash
-docker compose up -d --build
-```
-
-4) Откройте в браузере: `http://<IP_вашего_pi>:3030`.
-
-Фронтенд использует локальный прокси `/api/kid-control`. Все параметры (TARGET, BASIC_AUTH) задаются в `.env` и обрабатываются сервером (proxy). Это предотвращает утечку учётных данных в браузер или localStorage.
-
-## Генерация `BASIC_AUTH` (подробно)
-
-HTTP Basic Authorization требует заголовка в виде:
+HTTP Basic authentication expects a header of the form:
 
 ```
 Authorization: Basic <base64(username:password)>
 ```
 
-Примеры генерации base64 для строки `username:password`.
+Examples for the string `kidreader:[SOME-PWD]`:
 
-macOS / Linux (bash / zsh):
+- macOS/Linux (`bash`/`zsh`):
 
-```bash
-# безопасно (не интерпретируя спецсимволов оболочкой):
-B64=$(printf '%s' 'kidreader:[SOME-PWD]' | base64 | tr -d '\n')
-echo "BASIC_AUTH=Basic $B64" >> .env
-```
+  ```bash
+  B64=$(printf '%s' 'kidreader:[SOME-PWD]' | base64 | tr -d '\n')
+  echo "BASIC_AUTH=Basic $B64" >> .env
+  ```
 
-или (однострочно, если вы уже скопировали .env):
+  Or, if `.env` already exists:
 
-```bash
-printf "BASIC_AUTH=Basic %s\n" "$(printf '%s' 'kidreader:[SOME-PWD]' | base64 | tr -d '\n')" >> .env
-```
+  ```bash
+  printf "BASIC_AUTH=Basic %s\n" "$(printf '%s' 'kidreader:[SOME-PWD]' | base64 | tr -d '\n')" >> .env
+  ```
 
-Windows PowerShell:
+- Windows PowerShell:
 
-```powershell
-$bytes = [System.Text.Encoding]::UTF8.GetBytes('kidreader:[SOME-PWD]')
-$b64 = [Convert]::ToBase64String($bytes)
-Add-Content -Path .env -Value "BASIC_AUTH=Basic $b64"
-```
+  ```powershell
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes('kidreader:[SOME-PWD]')
+  $b64 = [Convert]::ToBase64String($bytes)
+  Add-Content -Path .env -Value "BASIC_AUTH=Basic $b64"
+  ```
 
-После этого в файле `.env` должна быть строка вида:
+Afterwards `.env` should contain a line similar to:
 
 ```
 BASIC_AUTH=Basic a2lkcmVhZGVyOjhCaE5YZ3NuQmlNVytjSk0=
 ```
 
-> ВАЖНО: не коммитите `.env` в репозиторий. Добавьте `.env` в `.gitignore` и ограничьте права на файл:
+> Important: Do not commit `.env` to source control. Add it to `.gitignore` and lock file permissions to the current user:
+>
+> ```bash
+> echo ".env" >> .gitignore
+> chmod 600 .env
+> ```
+
+## Frontend and API usage
+
+- The frontend is hardcoded to call `/api/kid-control`.
+- Inside the Docker network, Nginx proxies `/api` to `proxy:4000`, so the browser never makes cross-origin requests.
+
+If you need to access the proxy directly for debugging, expose port 4000 or run it locally and call `http://localhost:4000/api/kid-control`. The default compose file only exposes Nginx.
+
+## Useful docker compose commands
 
 ```bash
-echo ".env" >> .gitignore
-chmod 600 .env
-```
-
-## Работа с фронтендом и API
-
-- По умолчанию `index.html` содержит в поле API адрес `/api/kid-control`.
-- Nginx внутри контейнерной сети проксирует `/api` на `proxy:4000`, поэтому браузер обращается same-origin — CORS не возникает.
-
-Если вы хотите обратиться к proxy напрямую (например, для отладки), можно использовать `http://<pi>:4000/api/kid-control`, но текущая конфигурация не выставляет порт 4000 наружу по умолчанию.
-
-## Полезные команды
-
-```bash
-# Запустить сборку и фоновые контейнеры
+# Build images and start containers in the background
 docker compose up -d --build
 
-# Перезапустить только proxy
+# Restart only the proxy service
 docker compose restart proxy
 
-# Проверить статус
+# Show container status
 docker compose ps
 
-# Смотреть логи
+# Tail logs
 docker compose logs -f web
 docker compose logs -f proxy
 
-# Остановить
+# Stop and remove containers
 docker compose down
 ```
 
-## Безопасность и рекомендации
+## Security recommendations
 
-- Не храните секреты в репозитории. Для production используйте Docker secrets или внешний vault.
-- Ограничьте доступ к Pi/портам через firewall (ufw, iptables) если нужен доступ только из локальной сети.
-- Если открываете доступ из интернета — обязательно настройте HTTPS и защиту доступа (firewall, basic auth для UI и т.д.).
+- Keep secrets out of the repository; consider Docker secrets or an external vault for production.
+- Restrict access to the Pi/ports with a firewall (ufw, iptables) if the UI is for your local network only.
+- If the service is exposed to the internet, enforce HTTPS and protect the UI (e.g., additional auth, rate limiting).
 
-## Отладка
+## Troubleshooting
 
-- Если proxy возвращает ошибку 502, проверьте, доступен ли MikroTik с Pi. Выполните на Pi:
+- `502 Bad Gateway` from Nginx: confirm the MikroTik REST endpoint is reachable from the Pi:
 
-```bash
-curl -v http://192.168.88.254/rest/ip/kid-control
-```
+  ```bash
+  curl -v http://192.168.88.254/rest/ip/kid-control
+  ```
 
-- Проверьте логи proxy: `docker compose logs -f proxy`.
+- Check proxy logs for errors:
 
-## Возможные улучшения
+  ```bash
+  docker compose logs -f proxy
+  ```
 
-- Добавить кеширование в proxy (TTL) чтобы снизить частоту обращений к MikroTik.
-- Добавить rate-limiting и аутентификацию для UI.
-- Настроить автоматический выпуск TLS (Let's Encrypt) и редиректы на HTTPS.
+## Potential improvements
 
----
-
-Если хотите, могу автоматически сгенерировать значение `BASIC_AUTH` и положить его в `.env` (только если вы подтвердите, что это тестовый пароль и не против хранения его в репозитории). Также могу добавить `.env` в `.gitignore` автоматически.
+- Add caching in the proxy to reduce load on the MikroTik API.
+- Implement rate limiting and authentication for the UI.
+- Automate TLS (e.g., Let's Encrypt) and redirect HTTP to HTTPS.
