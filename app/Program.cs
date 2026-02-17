@@ -146,6 +146,7 @@ sealed class SessionSweepHostedService : BackgroundService
 sealed class KidControlService
 {
     private static readonly string[] DayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    private const int DayEndCutoffGraceMinutes = 10;
 
     private static readonly Dictionary<string, string> DayLabels = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -267,6 +268,17 @@ sealed class KidControlService
         }
 
         var day = GetDayContext(cfg.TimeZone);
+        var dayWindow = GetDayWindowBounds(cfg, day);
+        if (day.NowMs < dayWindow.StartMs)
+        {
+            throw new AppHttpException(409, $"Запрос доступа возможен только после {FormatLocalTime(dayWindow.StartMs, cfg.TimeZone)}");
+        }
+
+        if (day.NowMs > dayWindow.EndMs)
+        {
+            throw new AppHttpException(409, $"Запрос доступа после {FormatLocalTime(dayWindow.EndMs, cfg.TimeZone)} недоступен");
+        }
+
         var dayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
         var requestedWindowMinutes = Math.Clamp(windowMinutes ?? userCfg.DefaultWindowMinutes, 0, dayLimitMinutes);
 
@@ -285,8 +297,8 @@ sealed class KidControlService
 
         var maxPerDaySeconds = dayLimitSeconds + (cfg.GraceMinutes * 60);
         var remainingCapSeconds = Math.Max(0, maxPerDaySeconds - usage.UsedSeconds);
-        var secondsUntilEndOfDay = Math.Max(0, (int)((day.NextDayMs - day.NowMs) / 1000));
-        var maxGrantSecondsNow = Math.Min(remainingCapSeconds, secondsUntilEndOfDay);
+        var secondsUntilWindowCutoff = Math.Max(0, (int)((dayWindow.CutoffMs - day.NowMs) / 1000));
+        var maxGrantSecondsNow = Math.Min(remainingCapSeconds, secondsUntilWindowCutoff);
 
         if (maxGrantSecondsNow <= 0)
         {
@@ -381,6 +393,7 @@ sealed class KidControlService
     private async Task<StateResponse> BuildStateAsync(AccessConfig cfg, CancellationToken ct)
     {
         var day = GetDayContext(cfg.TimeZone);
+        var dayWindow = GetDayWindowBounds(cfg, day);
         var entries = await _mikrotik.GetKidControlListAsync(ct);
         var map = entries.ToDictionary(k => k.GetValueOrDefault("name") ?? string.Empty, v => v, StringComparer.Ordinal);
 
@@ -397,6 +410,9 @@ sealed class KidControlService
             cfg.TimeZone.Id,
             day.DayKey,
             DayLabels[day.DayKey],
+            FormatLocalTime(dayWindow.StartMs, cfg.TimeZone),
+            FormatLocalTime(dayWindow.EndMs, cfg.TimeZone),
+            FormatLocalTime(dayWindow.CutoffMs, cfg.TimeZone),
             cfg.DefaultWindowMinutes,
             cfg.GraceMinutes,
             users
@@ -405,6 +421,7 @@ sealed class KidControlService
 
     private UserStateRow BuildStateRow(AccessConfig cfg, UserLimitConfig userCfg, Dictionary<string, string>? mikrotikEntry, DayContext day)
     {
+        var dayWindow = GetDayWindowBounds(cfg, day);
         var dayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
         var dayLimitSeconds = dayLimitMinutes * 60;
         var maxPerDaySeconds = dayLimitSeconds + (cfg.GraceMinutes * 60);
@@ -413,8 +430,9 @@ sealed class KidControlService
 
         var remainingSeconds = Math.Max(0, dayLimitSeconds - usage.UsedSeconds);
         var remainingCapSeconds = Math.Max(0, maxPerDaySeconds - usage.UsedSeconds);
-        var secondsUntilEndOfDay = Math.Max(0, (int)((day.NextDayMs - day.NowMs) / 1000));
-        var maxGrantSecondsNow = Math.Max(0, Math.Min(remainingCapSeconds, secondsUntilEndOfDay));
+        var secondsUntilWindowCutoff = Math.Max(0, (int)((dayWindow.CutoffMs - day.NowMs) / 1000));
+        var maxGrantSecondsNow = Math.Max(0, Math.Min(remainingCapSeconds, secondsUntilWindowCutoff));
+        var inRequestWindow = day.NowMs >= dayWindow.StartMs && day.NowMs <= dayWindow.EndMs;
 
         var existsInMikrotik = mikrotikEntry is not null;
         var mikrotikDisabled = ParseBool(mikrotikEntry?.GetValueOrDefault("disabled") ?? "true");
@@ -443,7 +461,7 @@ sealed class KidControlService
             remainingSeconds,
             remainingCapSeconds,
             maxGrantSecondsNow,
-            existsInMikrotik && usage.UsedSeconds < dayLimitSeconds && maxGrantSecondsNow > 0,
+            existsInMikrotik && usage.UsedSeconds < dayLimitSeconds && maxGrantSecondsNow > 0 && inRequestWindow,
             Math.Clamp(userCfg.DefaultWindowMinutes, 0, dayLimitMinutes),
             activeSession
         );
@@ -469,6 +487,21 @@ sealed class KidControlService
     private static bool ParseBool(string value)
     {
         return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DayWindowBounds GetDayWindowBounds(AccessConfig cfg, DayContext day)
+    {
+        var window = cfg.DayWindows.GetValueOrDefault(day.DayKey) ?? new DayWindowConfig(0, (24 * 60) - 1);
+        var startMs = day.StartOfDayMs + (window.StartMinutes * 60_000L);
+        var endMs = day.StartOfDayMs + (window.EndMinutes * 60_000L);
+        var cutoffMs = endMs + (DayEndCutoffGraceMinutes * 60_000L);
+        return new DayWindowBounds(startMs, endMs, cutoffMs);
+    }
+
+    private static string FormatLocalTime(long ms, TimeZoneInfo zone)
+    {
+        var local = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(ms), zone);
+        return local.ToString("HH:mm", CultureInfo.InvariantCulture);
     }
 
     private static long ToUnixMilliseconds(TimeZoneInfo zone, DateTime localUnspecified)
@@ -534,6 +567,7 @@ sealed class KidControlService
     }
 
     private sealed record DayContext(long NowMs, string DayKey, long StartOfDayMs, long NextDayMs);
+    private sealed record DayWindowBounds(long StartMs, long EndMs, long CutoffMs);
     private sealed record UsageState(int UsedSeconds, SessionRecord? ActiveSession);
 }
 
@@ -945,6 +979,7 @@ sealed class AccessConfigProvider
         var timezone = ResolveTimeZone(timezoneName);
         var defaultWindow = ReadInt(root, "defaultWindowMinutes", 120);
         var graceMinutes = ReadInt(root, "graceMinutes", 15);
+        var dayWindows = ParseDayWindows(root);
 
         if (!root.TryGetProperty("users", out var usersEl) || usersEl.ValueKind != JsonValueKind.Array)
         {
@@ -985,7 +1020,37 @@ sealed class AccessConfigProvider
             users.Add(new UserLimitConfig(name, displayName, userDefaultWindow, limits));
         }
 
-        return new AccessConfig(timezone, defaultWindow, graceMinutes, users);
+        return new AccessConfig(timezone, defaultWindow, graceMinutes, dayWindows, users);
+    }
+
+    private static Dictionary<string, DayWindowConfig> ParseDayWindows(JsonElement root)
+    {
+        var result = new Dictionary<string, DayWindowConfig>(StringComparer.OrdinalIgnoreCase);
+        var hasConfig = root.TryGetProperty("dayWindows", out var windowsEl) && windowsEl.ValueKind == JsonValueKind.Object;
+
+        foreach (var day in DayKeys)
+        {
+            var startMinutes = 0;
+            var endMinutes = (24 * 60) - 1;
+
+            if (hasConfig && windowsEl.TryGetProperty(day, out var dayEl) && dayEl.ValueKind == JsonValueKind.Object)
+            {
+                var startRaw = dayEl.TryGetProperty("start", out var startEl) ? startEl.GetString() : null;
+                var endRaw = dayEl.TryGetProperty("end", out var endEl) ? endEl.GetString() : null;
+
+                startMinutes = ParseTimeOfDayOrDefault(startRaw, 0, $"dayWindows.{day}.start");
+                endMinutes = ParseTimeOfDayOrDefault(endRaw, (24 * 60) - 1, $"dayWindows.{day}.end");
+            }
+
+            if (endMinutes <= startMinutes)
+            {
+                throw new AppHttpException(500, $"Некорректное окно дня: dayWindows.{day}.end должно быть позже start");
+            }
+
+            result[day] = new DayWindowConfig(startMinutes, endMinutes);
+        }
+
+        return result;
     }
 
     private static int ReadInt(JsonElement obj, string property, int fallback)
@@ -1001,6 +1066,35 @@ sealed class AccessConfigProvider
             JsonValueKind.String when int.TryParse(el.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s) => Math.Max(0, s),
             _ => Math.Max(0, fallback)
         };
+    }
+
+    private static int ParseTimeOfDayOrDefault(string? raw, int fallbackMinutes, string fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallbackMinutes;
+        }
+
+        var value = raw.Trim();
+        var normalized = value.Replace('.', ':').Replace('-', ':');
+        var parts = normalized.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2)
+        {
+            throw new AppHttpException(500, $"Некорректный формат времени в {fieldName}: {raw}");
+        }
+
+        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hour)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var minute))
+        {
+            throw new AppHttpException(500, $"Некорректный формат времени в {fieldName}: {raw}");
+        }
+
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59)
+        {
+            throw new AppHttpException(500, $"Время вне диапазона в {fieldName}: {raw}");
+        }
+
+        return (hour * 60) + minute;
     }
 
     private static TimeZoneInfo ResolveTimeZone(string zone)
@@ -1107,7 +1201,8 @@ sealed class AppHttpException : Exception
     public int StatusCode { get; }
 }
 
-sealed record AccessConfig(TimeZoneInfo TimeZone, int DefaultWindowMinutes, int GraceMinutes, List<UserLimitConfig> Users);
+sealed record AccessConfig(TimeZoneInfo TimeZone, int DefaultWindowMinutes, int GraceMinutes, Dictionary<string, DayWindowConfig> DayWindows, List<UserLimitConfig> Users);
+sealed record DayWindowConfig(int StartMinutes, int EndMinutes);
 sealed record UserLimitConfig(string Name, string DisplayName, int DefaultWindowMinutes, Dictionary<string, int> LimitsMinutes);
 sealed record SessionRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs);
 sealed record SessionHistoryRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs, long? EndedAtMs, string? EndedReason);
@@ -1133,6 +1228,9 @@ sealed record StateResponse(
     string Timezone,
     string DayKey,
     string DayLabel,
+    string DayWindowStart,
+    string DayWindowEnd,
+    string DayWindowCutoff,
     int DefaultWindowMinutes,
     int GraceMinutes,
     List<UserStateRow> Users

@@ -2,6 +2,15 @@
   "timezone": "America/Los_Angeles",
   "defaultWindowMinutes": 120,
   "graceMinutes": 15,
+  "dayWindows": {
+    "mon": { "start": "06:00", "end": "23:30" },
+    "tue": { "start": "06:00", "end": "23:30" },
+    "wed": { "start": "06:00", "end": "23:30" },
+    "thu": { "start": "06:00", "end": "23:30" },
+    "fri": { "start": "06:00", "end": "23:30" },
+    "sat": { "start": "06:00", "end": "23:30" },
+    "sun": { "start": "06:00", "end": "23:30" }
+  },
   "users": [
     {
       "name": "Vlad",

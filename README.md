@@ -19,10 +19,13 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 ## Limit rules
 
 - Day limits are configured per weekday (`mon..sun`) in minutes.
+- Each day has `dayWindows.<day>.start/end` access window (for example `06:00-23:30`).
 - `Request/Extend` stays enabled while `used < dayLimit`.
 - Hard daily ceiling is `dayLimit + graceMinutes`.
 - If requested window is larger than available cap, it is truncated.
 - UI window size is clamped to `0..dayLimit`.
+- Access requests are blocked before `start` and after `end`, even with remaining limit.
+- At `end + 10 minutes` access is forcibly cut off (hard cutoff).
 
 ## Architecture
 
@@ -38,9 +41,18 @@ File: `config/kid-access-config.json`
 
 ```json
 {
-  "timezone": "Europe/Moscow",
+  "timezone": "America/Los_Angeles",
   "defaultWindowMinutes": 120,
   "graceMinutes": 15,
+  "dayWindows": {
+    "mon": { "start": "06:00", "end": "23:30" },
+    "tue": { "start": "06:00", "end": "23:30" },
+    "wed": { "start": "06:00", "end": "23:30" },
+    "thu": { "start": "06:00", "end": "23:30" },
+    "fri": { "start": "06:00", "end": "23:30" },
+    "sat": { "start": "06:00", "end": "23:30" },
+    "sun": { "start": "06:00", "end": "23:30" }
+  },
   "users": [
     {
       "name": "test",

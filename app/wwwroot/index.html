@@ -349,6 +349,8 @@
       metaEl.innerHTML = [
         `День: <strong>${state.dayLabel}</strong>`,
         `Таймзона: <strong>${state.timezone}</strong>`,
+        `Окно доступа: <strong>${state.dayWindowStart}-${state.dayWindowEnd}</strong>`,
+        `Авто-отключение: <strong>${state.dayWindowCutoff}</strong>`,
         `Окно по умолчанию: <strong>${state.defaultWindowMinutes} мин</strong>`,
         `Grace: <strong>${state.graceMinutes} мин</strong>`
       ].map((item) => `<span>${item}</span>`).join('');
