@@ -112,8 +112,9 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 980px;
+      min-width: 860px;
       background: #fff;
+      table-layout: fixed;
     }
 
     th,
@@ -129,7 +130,8 @@
       background: #f0f4fb;
       color: #33435b;
       font-weight: 700;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.2;
     }
 
     tr:last-child td {
@@ -194,7 +196,13 @@
     }
 
     td[data-label="Пользователь"] {
-      min-width: 210px;
+      min-width: 170px;
+    }
+
+    .actions button {
+      min-width: 0;
+      padding: 8px 10px;
+      font-size: 13px;
     }
 
     @media (max-width: 860px) {
@@ -208,6 +216,42 @@
       }
 
       .toolbar button {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 1400px) {
+      .container {
+        max-width: none;
+        margin: 8px;
+        padding: 12px;
+      }
+
+      th,
+      td {
+        font-size: 13px;
+        padding: 8px 6px;
+      }
+
+      .muted {
+        font-size: 11px;
+      }
+
+      input[type='number'] {
+        width: 72px;
+        padding: 5px;
+      }
+
+      .window-control {
+        gap: 6px;
+      }
+
+      .actions {
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .actions button {
         width: 100%;
       }
     }
@@ -300,6 +344,7 @@
             <th>Лимит на сегодня</th>
             <th>Остаток до лимита</th>
             <th>Таймер текущего окна</th>
+            <th>До отключения (end)</th>
             <th>Размер окна (мин)</th>
             <th>Действия</th>
           </tr>
@@ -373,7 +418,7 @@
       rowsEl.innerHTML = '';
 
       if (!state || !Array.isArray(state.users) || state.users.length === 0) {
-        rowsEl.innerHTML = '<tr><td colspan="6">В конфиге нет пользователей для отображения.</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="7">В конфиге нет пользователей для отображения.</td></tr>';
         return;
       }
 
@@ -385,6 +430,10 @@
         const dynamicUsedSeconds = getDynamicUsage(row, nowMs);
         const remainingSeconds = Math.max(0, dayLimitSeconds - dynamicUsedSeconds);
         const windowRemaining = row.activeSession ? Math.max(0, Math.floor((row.activeSession.endsAtMs - nowMs) / 1000)) : 0;
+        const disableAtMs = row.activeSession
+          ? Math.min(row.activeSession.endsAtMs, state.dayWindowCutoffMs || row.activeSession.endsAtMs)
+          : 0;
+        const disableRemaining = row.activeSession ? Math.max(0, Math.floor((disableAtMs - nowMs) / 1000)) : 0;
 
         if (!(row.name in selectedWindows)) {
           selectedWindows[row.name] = row.suggestedWindowMinutes;
@@ -415,6 +464,7 @@
           <td data-label="Лимит на сегодня">${fmtDuration(dayLimitSeconds)}</td>
           <td data-label="Остаток до лимита" class="${remainingSeconds === 0 ? 'danger' : 'ok'}">${fmtDuration(remainingSeconds)}</td>
           <td data-label="Таймер текущего окна" class="${windowRemaining === 0 ? 'muted' : 'warning'}">${fmtDuration(windowRemaining)}</td>
+          <td data-label="До отключения (end)" class="${disableRemaining === 0 ? 'muted' : 'warning'}">${fmtDuration(disableRemaining)}</td>
           <td data-label="Размер окна (мин)">
             <div class="window-control">
               <input
