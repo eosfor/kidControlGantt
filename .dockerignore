@@ -1,5 +1,6 @@
-.env
+.git
+.gitignore
 **/bin
 **/obj
+**/.DS_Store
 proxy/node_modules
-*.db

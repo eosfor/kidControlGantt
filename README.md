@@ -1,35 +1,36 @@
-# MikroTik Kid Control Access Manager
+# Kid Control Gantt (.NET)
 
-Web UI + backend proxy for managing MikroTik Kid Control access windows with daily limits.
+This branch rewrites the backend functionality to ASP.NET Core.
 
-## Features
+## Implemented
 
-- Reads users from MikroTik `/rest/ip/kid-control`.
-- Displays only users listed in `proxy/config/kid-access-config.json`.
-- Shows per-user daily limit, remaining time, active window timer, window size selector, and action buttons.
-- `Request/Extend` grants or extends access from now.
-- `Disable` stops active session and disables user access immediately.
-- Stores runtime session state in SQLite (persisted in Docker volume).
+- MikroTik Kid Control API on .NET:
+  - `GET /api/kid-control`
+  - `GET /api/state`
+  - `POST /api/users/{name}/request`
+  - `POST /api/users/{name}/disable`
+  - `GET /api/debug`
+  - `GET /health`
+- Day-based user limits from JSON config.
+- UI shows only users listed in config.
+- Access window grant/extend with `limit + grace` cap.
+- Manual disable support.
+- SQLite state storage and timer persistence.
+- Background sweep for expired sessions.
 
 ## Main files
 
-- `index.html` - table-based UI.
-- `proxy/index.js` - API/backend logic and MikroTik REST integration.
-- `proxy/config/kid-access-config.json` - day-based limits and user allowlist.
-- `docker-compose.yml` - `web` + `proxy` services with persistent DB volume.
+- `app/Program.cs` - API and business logic.
+- `app/wwwroot/index.html` - management page.
+- `config/kid-access-config.json` - active limits config.
+- `Dockerfile` / `docker-compose.yml` - container runtime.
 
 ## Run
 
 ```bash
 cp .env.example .env
-# fill credentials and URL
+# set MikroTik credentials
 docker compose up -d --build
 ```
 
 Open: `http://<host>:3030`
-
-## Security notes
-
-- Keep real credentials out of git.
-- Do not commit `.env`.
-- Prefer Docker secrets for production deployments.
