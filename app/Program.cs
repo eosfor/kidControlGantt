@@ -436,6 +436,7 @@ sealed class KidControlService
 
         var existsInMikrotik = mikrotikEntry is not null;
         var mikrotikDisabled = ParseBool(mikrotikEntry?.GetValueOrDefault("disabled") ?? "true");
+        var mikrotikPaused = ParseBool(mikrotikEntry?.GetValueOrDefault("paused") ?? "false");
 
         ActiveSessionRow? activeSession = null;
         if (usage.ActiveSession is not null)
@@ -456,6 +457,7 @@ sealed class KidControlService
             existsInMikrotik,
             mikrotikEntry?.GetValueOrDefault(".id"),
             mikrotikDisabled,
+            mikrotikPaused,
             dayLimitMinutes,
             usage.UsedSeconds,
             remainingSeconds,
@@ -633,6 +635,7 @@ sealed class MikrotikClient
         };
 
         await PatchEntryAsync(entry, patch, ct);
+        await ResumeUserAsync(entry, ct);
     }
 
     public async Task DisableUserAsync(Dictionary<string, string> entry, string dayKey, CancellationToken ct)
@@ -640,19 +643,28 @@ sealed class MikrotikClient
         var patch = new Dictionary<string, string>
         {
             [dayKey] = string.Empty,
-            ["disabled"] = "true"
+            ["disabled"] = "false"
         };
 
         await PatchEntryAsync(entry, patch, ct);
+        await PauseUserAsync(entry, ct);
+    }
+
+    public async Task PauseUserAsync(Dictionary<string, string> entry, CancellationToken ct)
+    {
+        var id = GetEntryId(entry);
+        await RunCommandAsync("pause", new Dictionary<string, string> { ["numbers"] = id }, ct);
+    }
+
+    public async Task ResumeUserAsync(Dictionary<string, string> entry, CancellationToken ct)
+    {
+        var id = GetEntryId(entry);
+        await RunCommandAsync("resume", new Dictionary<string, string> { ["numbers"] = id }, ct);
     }
 
     private async Task PatchEntryAsync(Dictionary<string, string> entry, Dictionary<string, string> patch, CancellationToken ct)
     {
-        if (!entry.TryGetValue(".id", out var id) || string.IsNullOrWhiteSpace(id))
-        {
-            throw new AppHttpException(502, "MikroTik entry не содержит .id");
-        }
-
+        var id = GetEntryId(entry);
         var url = $"{ApiUrl.TrimEnd('/')}/{id}";
 
         using var req = new HttpRequestMessage(HttpMethod.Patch, url)
@@ -667,6 +679,32 @@ sealed class MikrotikClient
         {
             throw new AppHttpException(502, $"MikroTik PATCH {url} => {(int)res.StatusCode}. {body}".Trim());
         }
+    }
+
+    private async Task RunCommandAsync(string command, Dictionary<string, string> payload, CancellationToken ct)
+    {
+        var url = $"{ApiUrl.TrimEnd('/')}/{command}";
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+        };
+
+        using var res = await _http.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            throw new AppHttpException(502, $"MikroTik POST {url} => {(int)res.StatusCode}. {body}".Trim());
+        }
+    }
+
+    private static string GetEntryId(Dictionary<string, string> entry)
+    {
+        if (!entry.TryGetValue(".id", out var id) || string.IsNullOrWhiteSpace(id))
+        {
+            throw new AppHttpException(502, "MikroTik entry не содержит .id");
+        }
+
+        return id;
     }
 
     private static string BuildWindowValue(long startMs, long endMs, TimeZoneInfo zone)
@@ -1213,6 +1251,7 @@ sealed record UserStateRow(
     bool ExistsInMikrotik,
     string? MikrotikId,
     bool MikrotikDisabled,
+    bool MikrotikPaused,
     int DayLimitMinutes,
     int UsedSeconds,
     int RemainingSeconds,

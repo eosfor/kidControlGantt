@@ -403,7 +403,9 @@
 
         const userStatus = !row.existsInMikrotik
           ? '<span class="danger">нет в MikroTik</span>'
-          : (row.mikrotikDisabled ? '<span class="warning">отключен</span>' : '<span class="ok">активен</span>');
+          : (row.mikrotikPaused
+              ? '<span class="warning">пауза</span>'
+              : (row.mikrotikDisabled ? '<span class="warning">отключен</span>' : '<span class="ok">активен</span>'));
 
         tr.innerHTML = `
           <td data-label="Пользователь">
@@ -430,7 +432,7 @@
           <td data-label="Действия">
             <div class="actions">
               <button type="button" data-role="request" data-user="${row.name}" ${canRequestNow ? '' : 'disabled'}>${requestLabel}</button>
-              <button type="button" class="btn-danger" data-role="disable" data-user="${row.name}" ${row.existsInMikrotik ? '' : 'disabled'}>Отключить</button>
+              <button type="button" class="btn-danger" data-role="disable" data-user="${row.name}" ${row.activeSession ? '' : 'disabled'}>Отключить</button>
             </div>
           </td>
         `;

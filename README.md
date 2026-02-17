@@ -13,7 +13,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
   - window size,
   - `Request/Extend` and `Disable` actions.
 - `Request/Extend` updates MikroTik and opens/extends access.
-- `Disable` stops active session and closes access in MikroTik.
+- `Disable` stops active session and executes `kid-control pause` for the user.
 - Session state is stored in SQLite.
 
 ## Limit rules
