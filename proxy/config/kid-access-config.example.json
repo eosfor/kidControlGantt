@@ -1,0 +1,21 @@
+{
+  "timezone": "Europe/Moscow",
+  "defaultWindowMinutes": 120,
+  "graceMinutes": 15,
+  "users": [
+    {
+      "name": "test",
+      "displayName": "test",
+      "defaultWindowMinutes": 120,
+      "limitsMinutes": {
+        "mon": 120,
+        "tue": 120,
+        "wed": 120,
+        "thu": 120,
+        "fri": 120,
+        "sat": 120,
+        "sun": 120
+      }
+    }
+  ]
+}

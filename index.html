@@ -1,489 +1,492 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MikroTik Kid Control Gantt Chart</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            background-color: #f5f5f5;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kid Control Access Manager</title>
+  <style>
+    :root {
+      --bg: #f4f6fb;
+      --card: #ffffff;
+      --line: #dde4ef;
+      --text: #1d2a3a;
+      --muted: #5a6a80;
+      --good: #1a8b4a;
+      --warn: #b06800;
+      --danger: #b02828;
+      --primary: #1d5eff;
+      --primary-hover: #1346c2;
+      --disabled: #bcc6d6;
+    }
 
-        .container {
-            width: 100%;
-            max-width: 1200px;
-            margin: 12px auto;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-            padding: 16px;
-            box-sizing: border-box;
-        }
-        
-        h1 {
-            color: #333;
-            text-align: center;
-            margin: 18px 0 20px 0;
-            font-size: 1.4rem;
-        }
-        
-        .controls {
-            margin-bottom: 16px;
-            text-align: center;
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        
-        button {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 18px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            min-width: 160px;
-        }
-        
-        button:hover {
-            background-color: #0056b3;
-        }
-        
-        button:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
-        
-        .error {
-            color: #dc3545;
-            text-align: center;
-            margin: 20px 0;
-            padding: 10px;
-            background-color: #f8d7da;
-            border: 1px solid #f5c6cb;
-            border-radius: 5px;
-        }
-        
-        .gantt-chart {
-            margin-top: 18px;
-        }
-        
-        .user-schedule {
-            margin-bottom: 30px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            overflow: hidden;
-        }
-        
-        .user-header {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-bottom: 1px solid #ddd;
-            font-weight: bold;
-            color: #333;
-        }
-        
-        .user-status {
-            margin-left: 10px;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: normal;
-        }
-        
-        .status-enabled {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        
-        .status-blocked {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-        
-        .status-paused {
-            background-color: #fff3cd;
-            color: #856404;
-        }
-        
-        .day-row {
-            display: flex;
-            align-items: center;
-            padding: 10px 15px;
-            border-bottom: 1px solid #eee;
-        }
-        
-        .day-row:last-child {
-            border-bottom: none;
-        }
-        
-        .day-label {
-            width: 80px;
-            font-weight: bold;
-            color: #666;
-        }
-        
-        .time-bar {
-            flex: 1;
-            height: 30px;
-            position: relative;
-            background-color: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 3px;
-            margin-left: 10px;
-        }
-        
-        .time-block {
-            position: absolute;
-            height: 100%;
-            background-color: #28a745;
-            border-radius: 2px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 11px;
-            font-weight: bold;
-            box-sizing: border-box;
-        }
-        
-        .time-axis {
-            margin: 10px 0 10px 90px;
-            height: 20px;
-            position: relative;
-            border-bottom: 1px solid #ddd;
-        }
-        
-        .time-marker {
-            position: absolute;
-            height: 15px;
-            border-left: 1px solid #999;
-            font-size: 10px;
-            color: #666;
-            padding-left: 2px;
-        }
-        
-        .loading {
-            text-align: center;
-            color: #666;
-            margin: 20px 0;
-        }
-        /* Vega container responsiveness */
-        #vegaVis {
-            width: 100%;
-            height: auto;
-            box-sizing: border-box;
-        }
+    * {
+      box-sizing: border-box;
+    }
 
-        /* Ensure vega-embed fills available space (fixes Safari sizing issues) */
-        .vega-embed {
-            width: 100% !important;
-            box-sizing: border-box;
-        }
-        .vega-embed .vega-visualization,
-        .vega-embed svg {
-            width: 100% !important;
-            max-width: 100%;
-            height: auto !important;
-        }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--text);
+      background: linear-gradient(145deg, #eef3ff 0%, #f7f9fd 55%, #eef7f1 100%);
+      min-height: 100vh;
+    }
 
-        /* Responsive tweaks */
-        @media (max-width: 600px) {
-            .container { padding: 12px; margin: 8px; }
-            h1 { font-size: 1.1rem; }
-            button { width: 100%; min-width: unset; }
-            .controls { gap: 8px; }
-            .day-label { width: 70px; font-size: 13px; }
-            .time-bar { height: 26px; }
-        }
+    .container {
+      max-width: 1280px;
+      margin: 16px auto;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(17, 31, 60, 0.08);
+    }
 
-        @media (min-width: 1200px) {
-            .container { padding: 22px; }
-            h1 { font-size: 1.6rem; }
-        }
-    </style>
+    h1 {
+      margin: 0 0 12px 0;
+      font-size: 1.4rem;
+    }
+
+    .meta {
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      color: #fff;
+      background: var(--primary);
+      min-width: 130px;
+    }
+
+    button:hover {
+      background: var(--primary-hover);
+    }
+
+    button:disabled {
+      background: var(--disabled);
+      cursor: not-allowed;
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      min-width: 100px;
+    }
+
+    .btn-danger:hover {
+      background: #8c2121;
+    }
+
+    .status {
+      min-height: 24px;
+      color: var(--muted);
+      margin: 6px 0 12px;
+    }
+
+    .status.error {
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 980px;
+      background: #fff;
+    }
+
+    th,
+    td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: middle;
+      font-size: 14px;
+    }
+
+    th {
+      background: #f0f4fb;
+      color: #33435b;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .user {
+      font-weight: 700;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .ok {
+      color: var(--good);
+      font-weight: 700;
+    }
+
+    .warning {
+      color: var(--warn);
+      font-weight: 700;
+    }
+
+    .danger {
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    .window-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    input[type='number'] {
+      width: 88px;
+      border: 1px solid #bfcbe0;
+      border-radius: 6px;
+      padding: 6px;
+      font-size: 14px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 860px) {
+      .container {
+        margin: 8px;
+        padding: 10px;
+      }
+
+      h1 {
+        font-size: 1.15rem;
+      }
+
+      .toolbar button {
+        width: 100%;
+      }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>MikroTik Kid Control Schedule</h1>
-        
-        <div class="controls">
-            <div style="margin-bottom:8px; color:#555;">Адрес API и креденшалы управляются серверной конфигурацией (файл <code>.env</code>). Запросы идут через локальный прокси <strong>/api/kid-control</strong>.</div>
-            <button id="loadData" onclick="loadScheduleData()">Загрузить расписание</button>
-        </div>
-        
-        <div id="error" class="error" style="display: none;"></div>
-        <div id="loading" class="loading" style="display: none;">Загрузка данных...</div>
-        <div id="ganttChart" class="gantt-chart"></div>
+  <div class="container">
+    <h1>Управление доступом MikroTik Kid Control</h1>
+    <div class="meta" id="meta"></div>
+
+    <div class="toolbar">
+      <button id="reloadBtn" type="button">Обновить</button>
+      <span class="muted">Кнопка "Запросить/продлить" активна до достижения дневного лимита.</span>
     </div>
 
-    <script>
-        // API connection values are provided by the user via inputs
+    <div class="status" id="status"></div>
 
-        const DAYS = {
-            'mon': 'Понедельник',
-            'tue': 'Вторник',
-            'wed': 'Среда',
-            'thu': 'Четверг',
-            'fri': 'Пятница',
-            'sat': 'Суббота',
-            'sun': 'Воскресенье'
-        };
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Пользователь</th>
+            <th>Лимит на сегодня</th>
+            <th>Остаток до лимита</th>
+            <th>Таймер текущего окна</th>
+            <th>Размер окна (мин)</th>
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
 
-        function showError(message) {
-            const errorDiv = document.getElementById('error');
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
+  <script>
+    let state = null;
+    let syncTimestampMs = 0;
+    let clientSyncAtMs = 0;
+    const selectedWindows = {};
+
+    const rowsEl = document.getElementById('rows');
+    const statusEl = document.getElementById('status');
+    const metaEl = document.getElementById('meta');
+    const reloadBtn = document.getElementById('reloadBtn');
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message || '';
+      statusEl.classList.toggle('error', Boolean(isError));
+    }
+
+    function fmtDuration(totalSeconds) {
+      const sec = Math.max(0, Math.floor(totalSeconds));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    function currentServerMs() {
+      if (!syncTimestampMs || !clientSyncAtMs) {
+        return Date.now();
+      }
+      const delta = Date.now() - clientSyncAtMs;
+      return syncTimestampMs + delta;
+    }
+
+    function renderMeta() {
+      if (!state) {
+        metaEl.innerHTML = '';
+        return;
+      }
+      metaEl.innerHTML = [
+        `День: <strong>${state.dayLabel}</strong>`,
+        `Таймзона: <strong>${state.timezone}</strong>`,
+        `Окно по умолчанию: <strong>${state.defaultWindowMinutes} мин</strong>`,
+        `Grace: <strong>${state.graceMinutes} мин</strong>`
+      ].map((item) => `<span>${item}</span>`).join('');
+    }
+
+    function getDynamicUsage(row, nowMs) {
+      if (!row.activeSession) {
+        return row.usedSeconds;
+      }
+
+      if (nowMs <= syncTimestampMs) {
+        return row.usedSeconds;
+      }
+
+      const additional = Math.max(0, Math.min(nowMs, row.activeSession.endsAtMs) - syncTimestampMs);
+      return row.usedSeconds + Math.floor(additional / 1000);
+    }
+
+    function renderRows() {
+      rowsEl.innerHTML = '';
+
+      if (!state || !Array.isArray(state.users) || state.users.length === 0) {
+        rowsEl.innerHTML = '<tr><td colspan="6">В конфиге нет пользователей для отображения.</td></tr>';
+        return;
+      }
+
+      const nowMs = currentServerMs();
+
+      for (const row of state.users) {
+        const tr = document.createElement('tr');
+        const dayLimitSeconds = row.dayLimitMinutes * 60;
+        const dynamicUsedSeconds = getDynamicUsage(row, nowMs);
+        const remainingSeconds = Math.max(0, dayLimitSeconds - dynamicUsedSeconds);
+        const windowRemaining = row.activeSession ? Math.max(0, Math.floor((row.activeSession.endsAtMs - nowMs) / 1000)) : 0;
+
+        if (!(row.name in selectedWindows)) {
+          selectedWindows[row.name] = row.suggestedWindowMinutes;
         }
 
-        function hideError() {
-            document.getElementById('error').style.display = 'none';
+        const maxWindow = Math.max(0, row.dayLimitMinutes);
+        let selectedWindow = Number(selectedWindows[row.name]);
+        if (!Number.isFinite(selectedWindow)) {
+          selectedWindow = row.suggestedWindowMinutes;
+        }
+        selectedWindow = Math.max(0, Math.min(maxWindow, Math.floor(selectedWindow)));
+        selectedWindows[row.name] = selectedWindow;
+
+        const canRequestNow = row.existsInMikrotik && dynamicUsedSeconds < dayLimitSeconds;
+        const requestLabel = row.activeSession ? 'Запросить/продлить доступ' : 'Запросить/продлить доступ';
+
+        const userStatus = !row.existsInMikrotik
+          ? '<span class="danger">нет в MikroTik</span>'
+          : (row.mikrotikDisabled ? '<span class="warning">отключен</span>' : '<span class="ok">активен</span>');
+
+        tr.innerHTML = `
+          <td>
+            <div class="user">${row.displayName}</div>
+            <div class="muted">${row.name} | ${userStatus}</div>
+          </td>
+          <td>${fmtDuration(dayLimitSeconds)}</td>
+          <td class="${remainingSeconds === 0 ? 'danger' : 'ok'}">${fmtDuration(remainingSeconds)}</td>
+          <td class="${windowRemaining === 0 ? 'muted' : 'warning'}">${fmtDuration(windowRemaining)}</td>
+          <td>
+            <div class="window-control">
+              <input
+                type="number"
+                min="0"
+                max="${maxWindow}"
+                step="1"
+                value="${selectedWindow}"
+                data-role="window"
+                data-user="${row.name}"
+              />
+              <span class="muted">0..${maxWindow}</span>
+            </div>
+          </td>
+          <td>
+            <div class="actions">
+              <button type="button" data-role="request" data-user="${row.name}" ${canRequestNow ? '' : 'disabled'}>${requestLabel}</button>
+              <button type="button" class="btn-danger" data-role="disable" data-user="${row.name}" ${row.existsInMikrotik ? '' : 'disabled'}>Отключить</button>
+            </div>
+          </td>
+        `;
+
+        rowsEl.appendChild(tr);
+      }
+    }
+
+    async function fetchState(showMessage = false) {
+      try {
+        reloadBtn.disabled = true;
+        const response = await fetch('/api/state', { method: 'GET' });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
         }
 
-        function showLoading() {
-            document.getElementById('loading').style.display = 'block';
+        state = payload;
+        syncTimestampMs = payload.serverTimeMs;
+        clientSyncAtMs = Date.now();
+        renderMeta();
+        renderRows();
+
+        if (showMessage) {
+          setStatus('Состояние обновлено.');
         }
+      } catch (error) {
+        setStatus(`Ошибка загрузки состояния: ${error.message}`, true);
+      } finally {
+        reloadBtn.disabled = false;
+      }
+    }
 
-        function hideLoading() {
-            document.getElementById('loading').style.display = 'none';
-        }
+    async function actionRequest(userName) {
+      const minutes = Number(selectedWindows[userName]);
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        setStatus('Размер окна должен быть больше 0 минут.', true);
+        return;
+      }
 
-        // No client-side API inputs any more; proxy handles upstream and credentials via .env
-        function prefillInputs() {
-            // intentionally empty
-        }
-
-        async function loadScheduleData() {
-            hideError();
-            showLoading();
-
-            const loadButton = document.getElementById('loadData');
-            loadButton.disabled = true;
-
-            try {
-                // Always use the local proxy endpoint; credentials live on the server-side (.env)
-                const apiUrl = '/api/kid-control';
-                let data;
-                try {
-                    const response = await fetch(apiUrl, { method: 'GET' });
-                    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    data = await response.json();
-                    console.log('Данные получены из API:', data);
-                } catch (apiError) {
-                    console.warn('Не удалось загрузить данные из API:', apiError.message);
-                    console.warn('Используем демонстрационные данные');
-                    data = [
-                        {
-                            ".id": "*3",
-                            "blocked": "true",
-                            "disabled": "false",
-                            "fri": "7h-7h45m,14h40m-17h20m,21h-23h",
-                            "mon": "7h-7h45m,15h-16h30m,19h30m-22h",
-                            "name": "Vlad",
-                            "paused": "false",
-                            "rate-limit": "",
-                            "sat": "7h-23h59m",
-                            "sun": "9h-16h,20h-22h30m",
-                            "thu": "6h-7h50m,15h-17h,20h-22h",
-                            "tue": "7h-7h45m,15h-16h30m,19h-22h",
-                            "wed": "7h-7h45m,15h-17h,19h-22h"
-                        }
-                    ];
-                    showError('CORS ошибка или недоступен API: Используются демонстрационные данные. Для работы с реальным API необходим прокси-сервер.');
-                }
-
-                renderGanttChart(data);
-            } catch (error) {
-                showError('Ошибка загрузки данных: ' + error.message);
-            } finally {
-                hideLoading();
-                loadButton.disabled = false;
-            }
-        }
-
-        function parseTimeRange(timeStr) {
-            if (!timeStr || timeStr === '') return [];
-            const ranges = timeStr.split(',');
-            return ranges.map(range => {
-                const [start, end] = range.split('-');
-                return {
-                    start: parseTime(start),
-                    end: parseTime(end),
-                    label: `${start}-${end}`
-                };
-            });
-        }
-
-        function parseTime(timeStr) {
-            const match = timeStr.match(/(\d+)h(?:(\d+)m)?/);
-            if (!match) return 0;
-            const hours = parseInt(match[1]);
-            const minutes = parseInt(match[2] || 0);
-            return hours * 60 + minutes; // в минутах
-        }
-
-        function minutesToPercent(minutes) {
-            return (minutes / (24 * 60)) * 100;
-        }
-
-        // Render Gantt using Vega-Lite (vega-embed)
-        async function renderGanttChart(data) {
-            const chartDiv = document.getElementById('ganttChart');
-            chartDiv.innerHTML = '';
-
-            const activeUsers = Array.isArray(data) ? data.filter(user => user.disabled === "false") : [];
-            if (activeUsers.length === 0) {
-                chartDiv.innerHTML = '<p style="text-align: center; color: #666;">Нет активных пользователей</p>';
-                return;
-            }
-
-            const events = [];
-            const refYear = 2020, refMonth = 0, refDay = 1;
-            // Для порядка дней используем DAYS в порядке ключей
-            const dayKeysOrdered = ['mon','tue','wed','thu','fri','sat','sun'];
-
-            activeUsers.forEach(user => {
-                dayKeysOrdered.forEach(dayKey => {
-                    const dayName = DAYS[dayKey];
-                    const dayValue = user[dayKey];
-                    if (!dayValue) return;
-                    const ranges = parseTimeRange(dayValue);
-                    ranges.forEach(r => {
-                        const startHours = Math.floor(r.start / 60);
-                        const startMins = r.start % 60;
-                        const endHours = Math.floor(r.end / 60);
-                        const endMins = r.end % 60;
-                        const startDate = new Date(refYear, refMonth, refDay, startHours, startMins);
-                        const endDate = new Date(refYear, refMonth, refDay, endHours, endMins);
-                        events.push({
-                            user: user.name,
-                            day: dayName,
-                            row: `${user.name} — ${dayName}`,
-                            start: startDate,
-                            end: endDate,
-                            label: r.label
-                        });
-                    });
-                });
-            });
-
-            if (events.length === 0) {
-                chartDiv.innerHTML = '<p style="text-align: center; color: #666;">У активных пользователей нет расписаний</p>';
-                return;
-            }
-
-            const domain = [];
-            activeUsers.forEach(u => {
-                dayKeysOrdered.forEach(k => domain.push(`${u.name} — ${DAYS[k]}`));
-            });
-
-            const stepHeight = 30;
-            const now = new Date();
-            const nowMarker = new Date(refYear, refMonth, refDay, now.getHours(), now.getMinutes(), now.getSeconds());
-            const spec = {
-                "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                "description": "Gantt chart for MikroTik Kid Control schedules",
-                "autosize": { "type": "fit", "contains": "padding" },
-                // use step-based height so number of rows determines height automatically
-                "height": { "step": stepHeight },
-                "data": { "values": events },
-                "layer": [
-                    {
-                        "mark": "bar",
-                        "encoding": {
-                            "x": { "field": "start", "type": "temporal", "title": null, "axis": { "format": "%H:%M", "tickCount": 8, "labelAngle": 0, "labelFontSize": 11 } },
-                            "x2": { "field": "end" },
-                            "y": { "field": "row", "type": "ordinal", "title": null, "axis": { "labelAngle": 0, "labelFontSize": 12 }, "sort": domain },
-                            "color": { "value": "rgba(144,238,144,0.85)" },
-                            "tooltip": [
-                                { "field": "user", "type": "nominal", "title": "Пользователь" },
-                                { "field": "day", "type": "nominal", "title": "День" },
-                                { "field": "label", "type": "nominal", "title": "Период" },
-                                { "field": "start", "type": "temporal", "title": "Начало", "format": "%H:%M" },
-                                { "field": "end", "type": "temporal", "title": "Окончание", "format": "%H:%M" }
-                            ]
-                        }
-                    },
-                    {
-                        "data": { "values": [{ "now": nowMarker }] },
-                        "mark": { "type": "rule", "color": "#377eb9", "strokeDash": [4, 4], "size": 2, "opacity": 0.85 },
-                        "encoding": {
-                            "x": { "field": "now", "type": "temporal" }
-                        }
-                    },
-                    {
-                        "data": { "values": [{ "now": nowMarker, "label": "Сейчас" }] },
-                        "mark": { "type": "text", "angle": 90, "align": "left", "baseline": "bottom", "dx": 10, "dy": -4, "color": "#377eb9", "fontSize": 11, "opacity": 0.7 },
-                        "encoding": {
-                            "x": { "field": "now", "type": "temporal" },
-                            "text": { "field": "label", "type": "nominal" }
-                        }
-                    }
-                ],
-                "config": { "view": { "stroke": "transparent" }, "axis": { "labelFont": "Arial", "titleFont": "Arial" } }
-            };
-
-            const visDiv = document.createElement('div');
-            visDiv.id = 'vegaVis';
-            chartDiv.appendChild(visDiv);
-
-            // Helper to embed and force a resize (works around Safari sizing quirks)
-            function embedVega(spec) {
-                // prefer SVG in Safari for crisper scaling
-                const options = { actions: false, renderer: 'svg' };
-                return window.vegaEmbed('#vegaVis', spec, options)
-                    .then(result => {
-                        const view = result.view;
-                        const container = document.getElementById('vegaVis');
-                        const resizeView = () => {
-                            try {
-                                const w = container.clientWidth || Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-                                if (view && typeof view.width === 'function') view.width(w);
-                                if (view && typeof view.runAsync === 'function') view.runAsync();
-                            } catch (e) {
-                                console.warn('vega resize error', e);
-                            }
-                        };
-                        // some browsers (Safari) need a short delay before sizing correctly
-                        setTimeout(resizeView, 80);
-                        window.addEventListener('resize', resizeView);
-                        return result;
-                    });
-            }
-
-            if (typeof vegaEmbed === 'undefined') {
-                const s1 = document.createElement('script');
-                s1.src = 'https://cdn.jsdelivr.net/npm/vega@5';
-                s1.onload = () => {
-                    const s2 = document.createElement('script');
-                    s2.src = 'https://cdn.jsdelivr.net/npm/vega-lite@5';
-                    s2.onload = () => {
-                        const s3 = document.createElement('script');
-                        s3.src = 'https://cdn.jsdelivr.net/npm/vega-embed@6';
-                        s3.onload = () => {
-                            embedVega(spec).catch(err => console.error(err));
-                        };
-                        document.head.appendChild(s3);
-                    };
-                    document.head.appendChild(s2);
-                };
-                document.head.appendChild(s1);
-            } else {
-                embedVega(spec).catch(err => console.error(err));
-            }
-        }
-
-        window.addEventListener('load', () => {
-            prefillInputs();
-            loadScheduleData();
+      try {
+        setStatus(`Запрос доступа для ${userName}...`);
+        const response = await fetch(`/api/users/${encodeURIComponent(userName)}/request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ windowMinutes: minutes })
         });
-    </script>
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        state = payload.state;
+        syncTimestampMs = state.serverTimeMs;
+        clientSyncAtMs = Date.now();
+        renderMeta();
+        renderRows();
+        setStatus(`Доступ для ${userName} обновлен.`);
+      } catch (error) {
+        setStatus(`Ошибка запроса доступа для ${userName}: ${error.message}`, true);
+      }
+    }
+
+    async function actionDisable(userName) {
+      try {
+        setStatus(`Отключение доступа для ${userName}...`);
+        const response = await fetch(`/api/users/${encodeURIComponent(userName)}/disable`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        state = payload.state;
+        syncTimestampMs = state.serverTimeMs;
+        clientSyncAtMs = Date.now();
+        renderMeta();
+        renderRows();
+        setStatus(`Доступ для ${userName} отключен.`);
+      } catch (error) {
+        setStatus(`Ошибка отключения для ${userName}: ${error.message}`, true);
+      }
+    }
+
+    rowsEl.addEventListener('input', (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || input.dataset.role !== 'window') {
+        return;
+      }
+
+      const user = input.dataset.user;
+      const max = Number(input.max || 0);
+      let value = Number(input.value);
+
+      if (!Number.isFinite(value)) {
+        value = 0;
+      }
+
+      value = Math.floor(Math.max(0, Math.min(max, value)));
+      selectedWindows[user] = value;
+      input.value = String(value);
+    });
+
+    rowsEl.addEventListener('click', async (event) => {
+      const button = event.target;
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      const role = button.dataset.role;
+      const user = button.dataset.user;
+      if (!role || !user) {
+        return;
+      }
+
+      if (role === 'request') {
+        await actionRequest(user);
+      } else if (role === 'disable') {
+        await actionDisable(user);
+      }
+    });
+
+    reloadBtn.addEventListener('click', () => fetchState(true));
+
+    setInterval(() => {
+      if (state) {
+        renderRows();
+      }
+    }, 1000);
+
+    setInterval(() => {
+      fetchState(false);
+    }, 5000);
+
+    fetchState(true);
+  </script>
 </body>
 </html>

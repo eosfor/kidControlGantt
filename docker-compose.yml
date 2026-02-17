@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   web:
     build: .
@@ -7,8 +6,15 @@ services:
     restart: unless-stopped
     volumes:
       - ./:/usr/share/nginx/html:ro
+
   proxy:
     build: ./proxy
     restart: unless-stopped
     env_file:
       - .env
+    volumes:
+      - ./proxy/config:/app/config:ro
+      - proxy-data:/data
+
+volumes:
+  proxy-data:

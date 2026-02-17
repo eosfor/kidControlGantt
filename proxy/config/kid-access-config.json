@@ -1,0 +1,35 @@
+{
+  "timezone": "Europe/Moscow",
+  "defaultWindowMinutes": 120,
+  "graceMinutes": 15,
+  "users": [
+    {
+      "name": "Vlad",
+      "displayName": "Vlad",
+      "defaultWindowMinutes": 120,
+      "limitsMinutes": {
+        "mon": 180,
+        "tue": 180,
+        "wed": 180,
+        "thu": 180,
+        "fri": 180,
+        "sat": 240,
+        "sun": 240
+      }
+    },
+    {
+      "name": "test",
+      "displayName": "test",
+      "defaultWindowMinutes": 120,
+      "limitsMinutes": {
+        "mon": 120,
+        "tue": 120,
+        "wed": 120,
+        "thu": 120,
+        "fri": 120,
+        "sat": 120,
+        "sun": 120
+      }
+    }
+  ]
+}
