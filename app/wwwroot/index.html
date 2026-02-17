@@ -140,6 +140,17 @@
       font-weight: 700;
     }
 
+    .user-link {
+      color: var(--primary);
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(29, 94, 255, 0.4);
+    }
+
+    .user-link:hover {
+      color: var(--primary-hover);
+      border-bottom-color: rgba(19, 70, 194, 0.6);
+    }
+
     .muted {
       color: var(--muted);
       font-size: 12px;
@@ -182,6 +193,10 @@
       flex-wrap: wrap;
     }
 
+    td[data-label="Пользователь"] {
+      min-width: 210px;
+    }
+
     @media (max-width: 860px) {
       .container {
         margin: 8px;
@@ -193,6 +208,73 @@
       }
 
       .toolbar button {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .table-wrap {
+        overflow-x: visible;
+        border: none;
+      }
+
+      table,
+      thead,
+      tbody,
+      tr,
+      td {
+        display: block;
+        width: 100%;
+      }
+
+      thead {
+        display: none;
+      }
+
+      table {
+        min-width: 0;
+      }
+
+      tr {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        margin-bottom: 10px;
+        padding: 4px 10px;
+        background: #fff;
+      }
+
+      tr:last-child {
+        margin-bottom: 0;
+      }
+
+      td {
+        border-bottom: 1px dashed #d9e1ee;
+        padding: 10px 0;
+      }
+
+      td:last-child {
+        border-bottom: none;
+      }
+
+      td::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .window-control {
+        justify-content: space-between;
+      }
+
+      .actions {
+        flex-direction: column;
+      }
+
+      .actions button {
         width: 100%;
       }
     }
@@ -322,14 +404,14 @@
           : (row.mikrotikDisabled ? '<span class="warning">отключен</span>' : '<span class="ok">активен</span>');
 
         tr.innerHTML = `
-          <td>
-            <div class="user">${row.displayName}</div>
+          <td data-label="Пользователь">
+            <div class="user"><a class="user-link" href="/user-stats.html?user=${encodeURIComponent(row.name)}">${row.displayName}</a></div>
             <div class="muted">${row.name} | ${userStatus}</div>
           </td>
-          <td>${fmtDuration(dayLimitSeconds)}</td>
-          <td class="${remainingSeconds === 0 ? 'danger' : 'ok'}">${fmtDuration(remainingSeconds)}</td>
-          <td class="${windowRemaining === 0 ? 'muted' : 'warning'}">${fmtDuration(windowRemaining)}</td>
-          <td>
+          <td data-label="Лимит на сегодня">${fmtDuration(dayLimitSeconds)}</td>
+          <td data-label="Остаток до лимита" class="${remainingSeconds === 0 ? 'danger' : 'ok'}">${fmtDuration(remainingSeconds)}</td>
+          <td data-label="Таймер текущего окна" class="${windowRemaining === 0 ? 'muted' : 'warning'}">${fmtDuration(windowRemaining)}</td>
+          <td data-label="Размер окна (мин)">
             <div class="window-control">
               <input
                 type="number"
@@ -343,7 +425,7 @@
               <span class="muted">0..${maxWindow}</span>
             </div>
           </td>
-          <td>
+          <td data-label="Действия">
             <div class="actions">
               <button type="button" data-role="request" data-user="${row.name}" ${canRequestNow ? '' : 'disabled'}>${requestLabel}</button>
               <button type="button" class="btn-danger" data-role="disable" data-user="${row.name}" ${row.existsInMikrotik ? '' : 'disabled'}>Отключить</button>

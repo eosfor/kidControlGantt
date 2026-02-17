@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Статистика пользователя</title>
+  <style>
+    :root {
+      --bg: #f4f6fb;
+      --card: #ffffff;
+      --line: #dde4ef;
+      --text: #1d2a3a;
+      --muted: #5a6a80;
+      --primary: #1d5eff;
+      --primary-hover: #1346c2;
+      --auto: #1a8b4a;
+      --manual: #bf3c3c;
+      --active: #1f6fff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--text);
+      background: linear-gradient(145deg, #eef3ff 0%, #f7f9fd 55%, #eef7f1 100%);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 16px auto;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(17, 31, 60, 0.08);
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.3rem;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      color: #fff;
+      background: var(--primary);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn:hover {
+      background: var(--primary-hover);
+    }
+
+    .meta {
+      color: var(--muted);
+      margin-bottom: 10px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 14px;
+    }
+
+    .status {
+      min-height: 22px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .status.error {
+      color: #bf3c3c;
+      font-weight: 700;
+    }
+
+    .legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+
+    .axis {
+      margin-left: 155px;
+      margin-right: 8px;
+      position: relative;
+      height: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .axis-mark {
+      position: absolute;
+      bottom: 0;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .chart {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 155px 1fr;
+      border-bottom: 1px solid var(--line);
+      min-height: 40px;
+    }
+
+    .row:last-child {
+      border-bottom: none;
+    }
+
+    .day-label {
+      padding: 10px;
+      color: #3a4b64;
+      font-size: 13px;
+      border-right: 1px solid var(--line);
+      background: #f7f9fd;
+      white-space: nowrap;
+    }
+
+    .timeline {
+      position: relative;
+      margin: 8px;
+      border: 1px solid #e2e8f4;
+      border-radius: 6px;
+      background:
+        repeating-linear-gradient(
+          to right,
+          transparent,
+          transparent calc((100% / 24) - 1px),
+          rgba(130, 150, 180, 0.12) calc((100% / 24) - 1px),
+          rgba(130, 150, 180, 0.12) calc(100% / 24)
+        ),
+        #fafdff;
+      min-height: 24px;
+      overflow: hidden;
+    }
+
+    .segment {
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      border-radius: 4px;
+      min-width: 2px;
+    }
+
+    .segment.auto {
+      background: rgba(26, 139, 74, 0.78);
+      border: 1px solid #1f6f45;
+    }
+
+    .segment.manual {
+      background: rgba(191, 60, 60, 0.78);
+      border: 1px solid #8b2f2f;
+    }
+
+    .segment.active {
+      background: rgba(31, 111, 255, 0.78);
+      border: 1px solid #1f5fd4;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    @media (max-width: 860px) {
+      .container {
+        margin: 8px;
+        padding: 10px;
+      }
+
+      .axis {
+        margin-left: 120px;
+      }
+
+      .row {
+        grid-template-columns: 120px 1fr;
+      }
+
+      .day-label {
+        font-size: 12px;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .legend {
+        gap: 10px;
+        font-size: 12px;
+      }
+
+      .axis {
+        margin-left: 94px;
+        height: 22px;
+      }
+
+      .row {
+        grid-template-columns: 94px 1fr;
+        min-height: 34px;
+      }
+
+      .day-label {
+        padding: 8px 6px;
+        font-size: 11px;
+      }
+
+      .timeline {
+        margin: 6px;
+        min-height: 22px;
+      }
+    }
+
+    @media (max-width: 430px) {
+      .top .btn {
+        width: 100%;
+      }
+
+      .axis {
+        display: none;
+      }
+
+      .row {
+        grid-template-columns: 1fr;
+      }
+
+      .day-label {
+        border-right: none;
+        border-bottom: 1px solid var(--line);
+        padding: 8px 10px 6px;
+        font-size: 12px;
+      }
+
+      .timeline {
+        margin: 6px 10px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top">
+      <h1 id="title">Статистика пользователя</h1>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a class="btn" href="/">Назад</a>
+        <button class="btn" id="reloadBtn" type="button">Обновить</button>
+      </div>
+    </div>
+
+    <div class="meta" id="meta"></div>
+    <div class="status" id="status"></div>
+
+    <div class="legend">
+      <span class="legend-item"><span class="swatch" style="background:var(--auto);"></span> Истекло автоматически</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--manual);"></span> Отключено кнопкой</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--active);"></span> Активная сессия</span>
+    </div>
+
+    <div class="axis" id="axis"></div>
+    <div class="chart" id="chart"></div>
+  </div>
+
+  <script>
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const DAYS = 7;
+
+    const titleEl = document.getElementById('title');
+    const metaEl = document.getElementById('meta');
+    const statusEl = document.getElementById('status');
+    const chartEl = document.getElementById('chart');
+    const axisEl = document.getElementById('axis');
+    const reloadBtn = document.getElementById('reloadBtn');
+
+    let stats = null;
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message || '';
+      statusEl.classList.toggle('error', Boolean(isError));
+    }
+
+    function getUserName() {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get('user') || '').trim();
+    }
+
+    function buildAxis() {
+      axisEl.innerHTML = '';
+      const ticks = window.innerWidth <= 620
+        ? [0, 6, 12, 18, 24]
+        : [0, 4, 8, 12, 16, 20, 24];
+      for (const hour of ticks) {
+        const marker = document.createElement('div');
+        marker.className = 'axis-mark';
+        marker.style.left = `${(hour / 24) * 100}%`;
+        marker.textContent = `${String(hour).padStart(2, '0')}:00`;
+        axisEl.appendChild(marker);
+      }
+    }
+
+    function fmtDate(ts, timeZone, opts) {
+      return new Intl.DateTimeFormat('ru-RU', { timeZone, ...opts }).format(new Date(ts));
+    }
+
+    function fmtTooltip(segment, timeZone) {
+      const start = fmtDate(segment.startedAtMs, timeZone, {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+
+      const end = fmtDate(segment.endedAtMs, timeZone, {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+
+      return `${start} - ${end} | ${segment.endReasonLabel}`;
+    }
+
+    function renderChart(data) {
+      chartEl.innerHTML = '';
+
+      const segments = Array.isArray(data.segments) ? data.segments : [];
+      const rangeStart = data.rangeStartMs;
+      const rangeEnd = data.rangeEndMs;
+      const rowsCount = Math.max(1, Math.round((rangeEnd - rangeStart) / DAY_MS));
+
+      for (let i = 0; i < rowsCount; i += 1) {
+        const dayStart = rangeStart + (i * DAY_MS);
+        const dayEnd = dayStart + DAY_MS;
+
+        const row = document.createElement('div');
+        row.className = 'row';
+
+        const label = document.createElement('div');
+        label.className = 'day-label';
+        label.textContent = fmtDate(dayStart, data.timezone, {
+          weekday: 'short',
+          day: '2-digit',
+          month: '2-digit'
+        });
+
+        const timeline = document.createElement('div');
+        timeline.className = 'timeline';
+
+        const daySegments = segments.filter((segment) => segment.endedAtMs > dayStart && segment.startedAtMs < dayEnd);
+
+        for (const segment of daySegments) {
+          const start = Math.max(segment.startedAtMs, dayStart);
+          const end = Math.min(segment.endedAtMs, dayEnd);
+          const widthMs = Math.max(0, end - start);
+          if (widthMs <= 0) {
+            continue;
+          }
+
+          const bar = document.createElement('div');
+          bar.className = `segment ${segment.endReason}`;
+          bar.style.left = `${((start - dayStart) / DAY_MS) * 100}%`;
+          bar.style.width = `${(widthMs / DAY_MS) * 100}%`;
+          bar.title = fmtTooltip(segment, data.timezone);
+          timeline.appendChild(bar);
+        }
+
+        row.appendChild(label);
+        row.appendChild(timeline);
+        chartEl.appendChild(row);
+      }
+
+      if (segments.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'За выбранный период сессий не найдено.';
+        chartEl.appendChild(empty);
+      }
+    }
+
+    function renderMeta(data) {
+      metaEl.innerHTML = [
+        `Пользователь: <strong>${data.displayName}</strong> (${data.user})`,
+        `Период: <strong>последние ${data.days} дней</strong>`,
+        `Таймзона: <strong>${data.timezone}</strong>`
+      ].map((item) => `<span>${item}</span>`).join('');
+    }
+
+    async function loadStats(showMessage = false) {
+      const user = getUserName();
+      if (!user) {
+        setStatus('Не указан пользователь в query-параметре user.', true);
+        return;
+      }
+
+      try {
+        reloadBtn.disabled = true;
+        const response = await fetch(`/api/users/${encodeURIComponent(user)}/stats?days=${DAYS}`, { method: 'GET' });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        stats = payload;
+        titleEl.textContent = `Статистика: ${payload.displayName}`;
+        renderMeta(payload);
+        renderChart(payload);
+
+        if (showMessage) {
+          setStatus('Статистика обновлена.');
+        }
+      } catch (error) {
+        setStatus(`Ошибка загрузки статистики: ${error.message}`, true);
+      } finally {
+        reloadBtn.disabled = false;
+      }
+    }
+
+    reloadBtn.addEventListener('click', () => loadStats(true));
+    window.addEventListener('resize', buildAxis);
+
+    buildAxis();
+    loadStats(true);
+
+    setInterval(() => {
+      if (stats) {
+        loadStats(false);
+      }
+    }, 15000);
+  </script>
+</body>
+</html>

@@ -56,6 +56,19 @@ app.MapGet("/api/state", async (KidControlService service, CancellationToken ct)
     }
 });
 
+app.MapGet("/api/users/{name}/stats", async (string name, int? days, KidControlService service, CancellationToken ct) =>
+{
+    try
+    {
+        var result = await service.GetUserStatsAsync(name, days ?? 7, ct);
+        return Results.Ok(result);
+    }
+    catch (AppHttpException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode);
+    }
+});
+
 app.MapPost("/api/users/{name}/request", async (string name, RequestWindowDto body, KidControlService service, CancellationToken ct) =>
 {
     try
@@ -176,6 +189,70 @@ sealed class KidControlService
         SweepExpiredSessions();
         var cfg = _configProvider.GetConfig();
         return await BuildStateAsync(cfg, ct);
+    }
+
+    public Task<UserStatsResponse> GetUserStatsAsync(string userName, int days, CancellationToken ct)
+    {
+        SweepExpiredSessions();
+        var cfg = _configProvider.GetConfig();
+        var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, userName, StringComparison.Ordinal));
+
+        if (userCfg is null)
+        {
+            throw new AppHttpException(404, $"Пользователь {userName} отсутствует в конфигурации");
+        }
+
+        var normalizedDays = Math.Clamp(days, 1, 30);
+        var nowUtc = DateTimeOffset.UtcNow;
+        var nowLocal = TimeZoneInfo.ConvertTime(nowUtc, cfg.TimeZone);
+
+        var todayStartLocal = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, 0, 0, 0, DateTimeKind.Unspecified);
+        var rangeStartLocal = todayStartLocal.AddDays(-(normalizedDays - 1));
+        var rangeEndLocal = todayStartLocal.AddDays(1);
+
+        var rangeStartUtcMs = ToUnixMilliseconds(cfg.TimeZone, rangeStartLocal);
+        var rangeEndUtcMs = ToUnixMilliseconds(cfg.TimeZone, rangeEndLocal);
+
+        var sessions = _repo.ListSessionsIntersectingRange(userCfg.Name, rangeStartUtcMs, rangeEndUtcMs);
+        var segments = new List<UserStatsSegment>();
+
+        foreach (var session in sessions)
+        {
+            var effectiveEndMs = session.EndedAtMs ?? session.ExpiresAtMs;
+            if (effectiveEndMs <= session.StartedAtMs)
+            {
+                continue;
+            }
+
+            var clippedStartMs = Math.Max(session.StartedAtMs, rangeStartUtcMs);
+            var clippedEndMs = Math.Min(effectiveEndMs, rangeEndUtcMs);
+            if (clippedEndMs <= clippedStartMs)
+            {
+                continue;
+            }
+
+            var endReason = ResolveEndReason(session);
+            segments.Add(new UserStatsSegment(
+                session.Id,
+                clippedStartMs,
+                clippedEndMs,
+                endReason,
+                EndReasonLabel(endReason)
+            ));
+        }
+
+        var response = new UserStatsResponse(
+            userCfg.Name,
+            userCfg.DisplayName,
+            cfg.TimeZone.Id,
+            normalizedDays,
+            nowUtc.ToUnixTimeMilliseconds(),
+            rangeStartUtcMs,
+            rangeEndUtcMs,
+            segments
+        );
+
+        return Task.FromResult(response);
     }
 
     public async Task<RequestResponse> RequestAccessAsync(string userName, int? windowMinutes, CancellationToken ct)
@@ -392,6 +469,38 @@ sealed class KidControlService
     private static bool ParseBool(string value)
     {
         return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static long ToUnixMilliseconds(TimeZoneInfo zone, DateTime localUnspecified)
+    {
+        var utc = TimeZoneInfo.ConvertTimeToUtc(localUnspecified, zone);
+        return new DateTimeOffset(utc, TimeSpan.Zero).ToUnixTimeMilliseconds();
+    }
+
+    private static string ResolveEndReason(SessionHistoryRecord session)
+    {
+        if (session.EndedAtMs is null)
+        {
+            return "active";
+        }
+
+        if (string.Equals(session.EndedReason, "manual", StringComparison.OrdinalIgnoreCase))
+        {
+            return "manual";
+        }
+
+        return "expired";
+    }
+
+    private static string EndReasonLabel(string reason)
+    {
+        return reason switch
+        {
+            "manual" => "Отключено кнопкой",
+            "expired" => "Истекло автоматически",
+            "active" => "Активная сессия",
+            _ => "Неизвестно"
+        };
     }
 
     private static DayContext GetDayContext(TimeZoneInfo zone)
@@ -632,6 +741,41 @@ sealed class SessionRepository
         }
     }
 
+    public List<SessionHistoryRecord> ListSessionsIntersectingRange(string userName, long rangeStartMs, long rangeEndMs)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT id, user_name, started_at_ms, expires_at_ms, ended_at_ms, ended_reason
+                FROM sessions
+                WHERE user_name = $user_name
+                  AND started_at_ms < $range_end_ms
+                  AND COALESCE(ended_at_ms, expires_at_ms) > $range_start_ms
+                ORDER BY started_at_ms ASC";
+            cmd.Parameters.AddWithValue("$user_name", userName);
+            cmd.Parameters.AddWithValue("$range_start_ms", rangeStartMs);
+            cmd.Parameters.AddWithValue("$range_end_ms", rangeEndMs);
+
+            using var reader = cmd.ExecuteReader();
+            var result = new List<SessionHistoryRecord>();
+            while (reader.Read())
+            {
+                result.Add(new SessionHistoryRecord(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetInt64(2),
+                    reader.GetInt64(3),
+                    reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5)
+                ));
+            }
+
+            return result;
+        }
+    }
+
     public long SumCompletedUsageMs(string userName, long startMs, long endMs)
     {
         lock (_sync)
@@ -779,21 +923,24 @@ sealed class AccessConfigProvider
             }
 
             var raw = File.ReadAllText(_settings.LimitsConfigPath);
-            _cached = ParseConfig(raw);
+            _cached = ParseConfig(raw, _settings.TimezoneOverride);
             _mtimeMs = currentMtime;
             _loadedAt = now;
             return _cached;
         }
     }
 
-    private static AccessConfig ParseConfig(string raw)
+    private static AccessConfig ParseConfig(string raw, string? timezoneOverride)
     {
         using var doc = JsonDocument.Parse(raw);
         var root = doc.RootElement;
 
-        var timezoneName = root.TryGetProperty("timezone", out var timezoneEl)
-            ? timezoneEl.GetString() ?? "UTC"
-            : "UTC";
+        var timezoneFromConfig = root.TryGetProperty("timezone", out var timezoneEl)
+            ? timezoneEl.GetString()
+            : null;
+        var timezoneName = !string.IsNullOrWhiteSpace(timezoneOverride)
+            ? timezoneOverride
+            : (string.IsNullOrWhiteSpace(timezoneFromConfig) ? "America/Los_Angeles" : timezoneFromConfig);
 
         var timezone = ResolveTimeZone(timezoneName);
         var defaultWindow = ReadInt(root, "defaultWindowMinutes", 120);
@@ -860,17 +1007,39 @@ sealed class AccessConfigProvider
     {
         if (string.IsNullOrWhiteSpace(zone))
         {
-            return TimeZoneInfo.Utc;
+            return TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles");
         }
 
-        try
+        var trimmed = zone.Trim();
+        var candidates = new List<string> { trimmed };
+
+        if (string.Equals(trimmed, "LA", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmed, "Los_Angeles", StringComparison.OrdinalIgnoreCase))
         {
-            return TimeZoneInfo.FindSystemTimeZoneById(zone.Trim());
+            candidates.Add("America/Los_Angeles");
+            candidates.Add("Pacific Standard Time");
         }
-        catch
+        else if (string.Equals(trimmed, "America/Los_Angeles", StringComparison.OrdinalIgnoreCase))
         {
-            return TimeZoneInfo.Utc;
+            candidates.Add("Pacific Standard Time");
         }
+        else if (string.Equals(trimmed, "Pacific Standard Time", StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add("America/Los_Angeles");
+        }
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(candidate);
+            }
+            catch
+            {
+            }
+        }
+
+        return TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles");
     }
 }
 
@@ -882,6 +1051,7 @@ sealed class RuntimeSettings
     public required string LimitsConfigPath { get; init; }
     public required int ConfigCacheTtlMs { get; init; }
     public required int SweepIntervalSeconds { get; init; }
+    public required string TimezoneOverride { get; init; }
 
     public static RuntimeSettings Load(IConfiguration cfg)
     {
@@ -911,7 +1081,8 @@ sealed class RuntimeSettings
             DbPath = cfg["DB_PATH"] ?? "/data/kid-control-state.db",
             LimitsConfigPath = cfg["LIMITS_CONFIG_PATH"] ?? "/app/config/kid-access-config.json",
             ConfigCacheTtlMs = ParseInt(cfg["CONFIG_CACHE_TTL_MS"], 5000),
-            SweepIntervalSeconds = ParseInt(cfg["SWEEP_INTERVAL_SECONDS"], 10)
+            SweepIntervalSeconds = ParseInt(cfg["SWEEP_INTERVAL_SECONDS"], 10),
+            TimezoneOverride = cfg["APP_TIMEZONE"] ?? cfg["TIMEZONE"] ?? string.Empty
         };
     }
 
@@ -939,6 +1110,7 @@ sealed class AppHttpException : Exception
 sealed record AccessConfig(TimeZoneInfo TimeZone, int DefaultWindowMinutes, int GraceMinutes, List<UserLimitConfig> Users);
 sealed record UserLimitConfig(string Name, string DisplayName, int DefaultWindowMinutes, Dictionary<string, int> LimitsMinutes);
 sealed record SessionRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs);
+sealed record SessionHistoryRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs, long? EndedAtMs, string? EndedReason);
 sealed record ActiveSessionRow(long Id, long StartedAtMs, long EndsAtMs, int RemainingSeconds, int TotalSeconds);
 sealed record UserStateRow(
     string Name,
@@ -969,3 +1141,14 @@ sealed record StateResponse(
 sealed record RequestWindowDto(int? WindowMinutes);
 sealed record RequestResponse(bool Ok, string User, int RequestedWindowMinutes, long GrantedUntilMs, StateResponse State);
 sealed record DisableResponse(bool Ok, string User, StateResponse State);
+sealed record UserStatsSegment(long SessionId, long StartedAtMs, long EndedAtMs, string EndReason, string EndReasonLabel);
+sealed record UserStatsResponse(
+    string User,
+    string DisplayName,
+    string Timezone,
+    int Days,
+    long ServerTimeMs,
+    long RangeStartMs,
+    long RangeEndMs,
+    List<UserStatsSegment> Segments
+);
