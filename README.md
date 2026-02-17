@@ -72,6 +72,7 @@ See `.env.example`.
 - `BASIC_AUTH` - optional auth header override.
 - `DB_PATH` - SQLite DB path.
 - `LIMITS_CONFIG_PATH` - limits config path.
+- `APP_TIMEZONE` - optional timezone override (e.g. `America/Los_Angeles`), takes precedence over JSON `timezone`.
 - `CONFIG_CACHE_TTL_MS` - config cache TTL.
 - `SWEEP_INTERVAL_SECONDS` - expired session cleanup interval.
 

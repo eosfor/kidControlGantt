@@ -72,6 +72,7 @@
 - `BASIC_AUTH` — опциональный override заголовка авторизации.
 - `DB_PATH` — путь к SQLite.
 - `LIMITS_CONFIG_PATH` — путь к JSON-конфигу лимитов.
+- `APP_TIMEZONE` — опциональный override таймзоны (например `America/Los_Angeles`), имеет приоритет над `timezone` в JSON.
 - `CONFIG_CACHE_TTL_MS` — кеш конфига.
 - `SWEEP_INTERVAL_SECONDS` — частота cleanup просроченных сессий.
 
