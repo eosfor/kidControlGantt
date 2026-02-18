@@ -2,6 +2,7 @@
   "timezone": "America/Los_Angeles",
   "defaultWindowMinutes": 120,
   "graceMinutes": 15,
+  "endingSoonMinutes": 10,
   "dayWindows": {
     "mon": { "start": "06:00", "end": "23:30" },
     "tue": { "start": "06:00", "end": "23:30" },
@@ -15,6 +16,8 @@
     {
       "name": "test",
       "displayName": "test",
+      "email": "child@example.com",
+      "parentEmail": ["parent1@example.com", "parent2@example.com"],
       "defaultWindowMinutes": 120,
       "limitsMinutes": {
         "mon": 120,

@@ -17,11 +17,13 @@
 - Состояние сессий хранится в SQLite.
 - Audit-события хранятся в SQLite (`audit_log`) для каждого пользователя: когда нажали `request/disable`, какое окно запросили и какое фактически выдано.
 - На странице статистики пользователя показывается его журнал событий за период (запрос/изменение окна/отключение/авто-истечение).
+- Email-уведомления: родители получают письма о включении/изменении/выключении/скором окончании, дети — о скором окончании.
 
 ## Правила лимитов
 
 - Лимит на день задается в минутах по дням недели (`mon..sun`).
 - Для каждого дня задается окно `dayWindows.<day>.start/end` (например `06:00-23:30`).
+- Порог уведомления о скором окончании задается в `endingSoonMinutes` (по умолчанию `10`).
 - Кнопка `Запросить/продлить доступ` активна, пока `used < dayLimit`.
 - Максимум выдачи в день ограничен `dayLimit + graceMinutes`.
 - Если запрошенное окно больше доступного остатка, окно автоматически обрезается.
@@ -49,6 +51,7 @@
   "timezone": "America/Los_Angeles",
   "defaultWindowMinutes": 120,
   "graceMinutes": 15,
+  "endingSoonMinutes": 10,
   "dayWindows": {
     "mon": { "start": "06:00", "end": "23:30" },
     "tue": { "start": "06:00", "end": "23:30" },
@@ -62,6 +65,8 @@
     {
       "name": "test",
       "displayName": "test",
+      "email": "child@example.com",
+      "parentEmail": ["parent1@example.com", "parent2@example.com"],
       "defaultWindowMinutes": 120,
       "limitsMinutes": {
         "mon": 120,
@@ -78,6 +83,8 @@
 ```
 
 Если пользователь есть в MikroTik, но отсутствует в `users`, он не появится на странице.
+`parentEmail` поддерживает оба формата: строка (`"parent@example.com"`) и массив строк.
+Если `email` или `parentEmail` пустой/отсутствует, соответствующие email-уведомления не отправляются.
 
 ## Переменные окружения
 
@@ -92,6 +99,7 @@
 - `APP_TIMEZONE` — опциональный override таймзоны (например `America/Los_Angeles`), имеет приоритет над `timezone` в JSON.
 - `CONFIG_CACHE_TTL_MS` — кеш конфига.
 - `SWEEP_INTERVAL_SECONDS` — частота cleanup просроченных сессий.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_SSL` — SMTP для email-уведомлений.
 
 ## API
 

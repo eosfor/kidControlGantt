@@ -17,11 +17,13 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - Session state is stored in SQLite.
 - Audit events are stored in SQLite (`audit_log`) per target user: when `request/disable` was triggered, requested window, and actually granted window.
 - User stats page includes the per-user audit timeline (request/window change/disable/auto-expire).
+- Email notifications: parents get emails on access start/change/disable/ending soon, children get ending-soon notifications.
 
 ## Limit rules
 
 - Day limits are configured per weekday (`mon..sun`) in minutes.
 - Each day has `dayWindows.<day>.start/end` access window (for example `06:00-23:30`).
+- Ending-soon threshold is configured with `endingSoonMinutes` (default `10`).
 - `Request/Extend` stays enabled while `used < dayLimit`.
 - Hard daily ceiling is `dayLimit + graceMinutes`.
 - If requested window is larger than available cap, it is truncated.
@@ -49,6 +51,7 @@ File: `config/kid-access-config.json`
   "timezone": "America/Los_Angeles",
   "defaultWindowMinutes": 120,
   "graceMinutes": 15,
+  "endingSoonMinutes": 10,
   "dayWindows": {
     "mon": { "start": "06:00", "end": "23:30" },
     "tue": { "start": "06:00", "end": "23:30" },
@@ -62,6 +65,8 @@ File: `config/kid-access-config.json`
     {
       "name": "test",
       "displayName": "test",
+      "email": "child@example.com",
+      "parentEmail": ["parent1@example.com", "parent2@example.com"],
       "defaultWindowMinutes": 120,
       "limitsMinutes": {
         "mon": 120,
@@ -78,6 +83,8 @@ File: `config/kid-access-config.json`
 ```
 
 If a user exists in MikroTik but is missing in `users`, it is hidden from UI.
+`parentEmail` supports both formats: string (`"parent@example.com"`) and array of strings.
+If `email` or `parentEmail` is missing/empty, corresponding email notifications are skipped.
 
 ## Environment variables
 
@@ -92,6 +99,7 @@ See `.env.example`.
 - `APP_TIMEZONE` - optional timezone override (e.g. `America/Los_Angeles`), takes precedence over JSON `timezone`.
 - `CONFIG_CACHE_TTL_MS` - config cache TTL.
 - `SWEEP_INTERVAL_SECONDS` - expired session cleanup interval.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_SSL` - SMTP settings for email notifications.
 
 ## API
 
