@@ -15,6 +15,8 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - `Request/Extend` updates MikroTik and opens/extends access.
 - `Disable` stops active session and executes `kid-control pause` for the user.
 - Session state is stored in SQLite.
+- Audit events are stored in SQLite (`audit_log`) per target user: when `request/disable` was triggered, requested window, and actually granted window.
+- User stats page includes the per-user audit timeline (request/window change/disable/auto-expire).
 
 ## Limit rules
 
@@ -34,6 +36,9 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - `config/kid-access-config.json` - active limits config.
 - `config/kid-access-config.example.json` - sample config.
 - SQLite path comes from `DB_PATH` (default `/data/kid-control-state.db`).
+- Main tables:
+  - `sessions` - active/history sessions and usage.
+  - `audit_log` - audit trail for `request/disable` actions.
 
 ## Limits config
 
@@ -93,6 +98,7 @@ See `.env.example`.
 - `GET /health` - healthcheck.
 - `GET /api/kid-control` - raw MikroTik kid-control list.
 - `GET /api/state` - UI state payload.
+- `GET /api/users/{name}/stats` - per-user stats with Gantt + `auditEvents` for the selected period.
 - `POST /api/users/{name}/request`
   - body: `{ "windowMinutes": 120 }`
 - `POST /api/users/{name}/disable`

@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "3030:8080"
+      - "3031:8080"
     restart: unless-stopped
     env_file:
       - .env

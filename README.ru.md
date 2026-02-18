@@ -15,6 +15,8 @@
 - По `Запросить/продлить доступ` backend изменяет запись в MikroTik и открывает/продлевает доступ.
 - По `Отключить` активная сессия завершается, для пользователя выполняется `kid-control pause`.
 - Состояние сессий хранится в SQLite.
+- Audit-события хранятся в SQLite (`audit_log`) для каждого пользователя: когда нажали `request/disable`, какое окно запросили и какое фактически выдано.
+- На странице статистики пользователя показывается его журнал событий за период (запрос/изменение окна/отключение/авто-истечение).
 
 ## Правила лимитов
 
@@ -34,6 +36,9 @@
 - `config/kid-access-config.json` — рабочий конфиг лимитов.
 - `config/kid-access-config.example.json` — пример конфига.
 - SQLite файл — путь из `DB_PATH` (по умолчанию `/data/kid-control-state.db`).
+- Основные таблицы:
+  - `sessions` — активные/завершенные сессии и расчет использования.
+  - `audit_log` — журнал действий `request/disable`.
 
 ## Конфиг лимитов
 
@@ -93,6 +98,7 @@
 - `GET /health` — healthcheck.
 - `GET /api/kid-control` — сырой список MikroTik kid-control.
 - `GET /api/state` — состояние для UI.
+- `GET /api/users/{name}/stats` — статистика пользователя: Gantt + `auditEvents` за период.
 - `POST /api/users/{name}/request` — запрос/продление окна.
   - body: `{ "windowMinutes": 120 }`
 - `POST /api/users/{name}/disable` — принудительное отключение.
