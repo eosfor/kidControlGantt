@@ -205,6 +205,48 @@
       text-align: center;
     }
 
+    .audit-section {
+      margin-top: 14px;
+    }
+
+    .audit-title {
+      margin: 0 0 8px 0;
+      font-size: 1.05rem;
+    }
+
+    .audit-wrap {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow-x: auto;
+      background: #fff;
+    }
+
+    .audit-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 740px;
+    }
+
+    .audit-table th,
+    .audit-table td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    .audit-table th {
+      background: #f0f4fb;
+      color: #33435b;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .audit-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
     @media (max-width: 860px) {
       .container {
         margin: 8px;
@@ -221,6 +263,10 @@
 
       .day-label {
         font-size: 12px;
+      }
+
+      .audit-table {
+        min-width: 660px;
       }
     }
 
@@ -298,6 +344,26 @@
 
     <div class="axis" id="axis"></div>
     <div class="chart" id="chart"></div>
+
+    <div class="audit-section">
+      <h2 class="audit-title">Журнал событий</h2>
+      <div class="audit-wrap">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>Время</th>
+              <th>Событие</th>
+              <th>Запрошено</th>
+              <th>Выдано</th>
+              <th>До</th>
+              <th>Сессия</th>
+              <th>Детали</th>
+            </tr>
+          </thead>
+          <tbody id="auditRows"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -309,6 +375,7 @@
     const statusEl = document.getElementById('status');
     const chartEl = document.getElementById('chart');
     const axisEl = document.getElementById('axis');
+    const auditRowsEl = document.getElementById('auditRows');
     const reloadBtn = document.getElementById('reloadBtn');
 
     let stats = null;
@@ -339,6 +406,17 @@
 
     function fmtDate(ts, timeZone, opts) {
       return new Intl.DateTimeFormat('ru-RU', { timeZone, ...opts }).format(new Date(ts));
+    }
+
+    function fmtDateTime(ts, timeZone) {
+      return fmtDate(ts, timeZone, {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
     }
 
     function fmtTooltip(segment, timeZone) {
@@ -426,6 +504,67 @@
       ].map((item) => `<span>${item}</span>`).join('');
     }
 
+    function fmtMinutes(value) {
+      if (!Number.isFinite(value)) {
+        return '-';
+      }
+      return `${value} мин`;
+    }
+
+    function renderAudit(data) {
+      auditRowsEl.innerHTML = '';
+      const events = Array.isArray(data.auditEvents) ? data.auditEvents : [];
+
+      if (events.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 7;
+        td.className = 'empty';
+        td.textContent = 'Событий за выбранный период нет.';
+        tr.appendChild(td);
+        auditRowsEl.appendChild(tr);
+        return;
+      }
+
+      for (const event of events) {
+        const tr = document.createElement('tr');
+
+        const occurredAt = document.createElement('td');
+        occurredAt.textContent = fmtDateTime(event.occurredAtMs, data.timezone);
+
+        const action = document.createElement('td');
+        action.textContent = event.actionLabel || event.action || '-';
+
+        const requested = document.createElement('td');
+        requested.textContent = fmtMinutes(event.requestedWindowMinutes);
+
+        const granted = document.createElement('td');
+        granted.textContent = fmtMinutes(event.grantedWindowMinutes);
+
+        const grantedUntil = document.createElement('td');
+        grantedUntil.textContent = Number.isFinite(event.grantedUntilMs)
+          ? fmtDateTime(event.grantedUntilMs, data.timezone)
+          : '-';
+
+        const session = document.createElement('td');
+        session.textContent = Number.isFinite(event.sessionId) && event.sessionId > 0
+          ? `#${event.sessionId}`
+          : '-';
+
+        const details = document.createElement('td');
+        details.textContent = event.detailsLabel || event.details || '-';
+
+        tr.appendChild(occurredAt);
+        tr.appendChild(action);
+        tr.appendChild(requested);
+        tr.appendChild(granted);
+        tr.appendChild(grantedUntil);
+        tr.appendChild(session);
+        tr.appendChild(details);
+        auditRowsEl.appendChild(tr);
+      }
+    }
+
     async function loadStats(showMessage = false) {
       const user = getUserName();
       if (!user) {
@@ -446,6 +585,7 @@
         titleEl.textContent = `Статистика: ${payload.displayName}`;
         renderMeta(payload);
         renderChart(payload);
+        renderAudit(payload);
 
         if (showMessage) {
           setStatus('Статистика обновлена.');

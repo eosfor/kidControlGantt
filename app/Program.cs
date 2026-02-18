@@ -176,7 +176,19 @@ sealed class KidControlService
         var expired = _repo.ListExpiredActiveSessions(nowMs);
         foreach (var session in expired)
         {
-            _repo.EndSession(session.Id, session.ExpiresAtMs, "expired", nowMs);
+            var ended = _repo.EndSession(session.Id, session.ExpiresAtMs, "expired", nowMs);
+            if (ended)
+            {
+                var grantedWindowMinutes = (int)Math.Max(0, (session.ExpiresAtMs - session.StartedAtMs) / 60_000L);
+                _repo.InsertAuditEvent(
+                    session.UserName,
+                    "expired",
+                    null,
+                    grantedWindowMinutes,
+                    session.ExpiresAtMs,
+                    null,
+                    session.ExpiresAtMs);
+            }
         }
     }
 
@@ -242,6 +254,9 @@ sealed class KidControlService
             ));
         }
 
+        var auditRows = _repo.ListAuditEventsIntersectingRange(userCfg.Name, rangeStartUtcMs, rangeEndUtcMs, 500);
+        var auditEvents = BuildAuditEventsForStats(sessions, auditRows, rangeStartUtcMs, rangeEndUtcMs);
+
         var response = new UserStatsResponse(
             userCfg.Name,
             userCfg.DisplayName,
@@ -250,7 +265,8 @@ sealed class KidControlService
             nowUtc.ToUnixTimeMilliseconds(),
             rangeStartUtcMs,
             rangeEndUtcMs,
-            segments
+            segments,
+            auditEvents
         );
 
         return Task.FromResult(response);
@@ -315,18 +331,20 @@ sealed class KidControlService
         var requestedWindowSeconds = requestedWindowMinutes * 60;
         var active = usage.ActiveSession;
         var startMs = active is null ? day.NowMs : active.StartedAtMs;
-        var extensionBaseMs = active is null ? day.NowMs : Math.Max(active.ExpiresAtMs, day.NowMs);
-
-        var targetEndMs = extensionBaseMs + (requestedWindowSeconds * 1000L);
-        var maxAllowedEndMs = day.NowMs + (maxGrantSecondsNow * 1000L);
-        if (targetEndMs > maxAllowedEndMs)
+        var requestedEndMs = active is null
+            ? day.NowMs + (requestedWindowSeconds * 1000L)
+            : active.StartedAtMs + (requestedWindowSeconds * 1000L);
+        if (active is not null && requestedEndMs <= day.NowMs)
         {
-            targetEndMs = maxAllowedEndMs;
+            throw new AppHttpException(409, $"Нельзя установить окно {requestedWindowMinutes} мин: это время уже прошло для текущей сессии");
         }
+
+        var maxAllowedEndMs = day.NowMs + (maxGrantSecondsNow * 1000L);
+        var targetEndMs = Math.Min(requestedEndMs, maxAllowedEndMs);
 
         if (targetEndMs <= day.NowMs)
         {
-            throw new AppHttpException(409, "Недостаточно остатка времени для продления доступа");
+            throw new AppHttpException(409, "Недостаточно остатка времени для изменения доступа");
         }
 
         await _mikrotik.ApplyWindowAsync(entry, day.DayKey, startMs, targetEndMs, cfg.TimeZone, ct);
@@ -339,6 +357,24 @@ sealed class KidControlService
         {
             _repo.ExtendSession(active.Id, targetEndMs, day.NowMs);
         }
+
+        var grantedWindowMinutes = (int)Math.Max(0, (targetEndMs - startMs) / 60_000L);
+        var auditAction = active is null
+            ? "request_started"
+            : targetEndMs > active.ExpiresAtMs
+                ? "window_extended"
+                : targetEndMs < active.ExpiresAtMs
+                    ? "window_shortened"
+                    : "window_updated";
+        var auditDetails = targetEndMs < requestedEndMs ? "window_clipped_by_limits" : null;
+        _repo.InsertAuditEvent(
+            userCfg.Name,
+            auditAction,
+            requestedWindowMinutes,
+            grantedWindowMinutes,
+            targetEndMs,
+            auditDetails,
+            day.NowMs);
 
         var state = await BuildStateAsync(cfg, ct);
         return new RequestResponse(true, userCfg.Name, requestedWindowMinutes, targetEndMs, state);
@@ -365,12 +401,22 @@ sealed class KidControlService
         }
 
         var active = _repo.GetActiveSession(userCfg.Name);
+        var hadActiveSession = false;
         if (active is not null)
         {
-            _repo.EndSession(active.Id, day.NowMs, "manual", day.NowMs);
+            hadActiveSession = _repo.EndSession(active.Id, day.NowMs, "manual", day.NowMs);
         }
 
         await _mikrotik.DisableUserAsync(entry, day.DayKey, ct);
+
+        _repo.InsertAuditEvent(
+            userCfg.Name,
+            hadActiveSession ? "disable" : "disable_no_session",
+            null,
+            null,
+            null,
+            null,
+            day.NowMs);
 
         var state = await BuildStateAsync(cfg, ct);
         return new DisableResponse(true, userCfg.Name, state);
@@ -499,7 +545,14 @@ sealed class KidControlService
         var window = cfg.DayWindows.GetValueOrDefault(day.DayKey) ?? new DayWindowConfig(0, (24 * 60) - 1);
         var startMs = day.StartOfDayMs + (window.StartMinutes * 60_000L);
         var endMs = day.StartOfDayMs + (window.EndMinutes * 60_000L);
-        var cutoffMs = endMs + (DayEndCutoffGraceMinutes * 60_000L);
+        var rawCutoffMs = endMs + (DayEndCutoffGraceMinutes * 60_000L);
+        var latestSameDayMs = day.NextDayMs - 60_000L;
+        var cutoffMs = Math.Min(rawCutoffMs, latestSameDayMs);
+        if (cutoffMs < endMs)
+        {
+            cutoffMs = endMs;
+        }
+
         return new DayWindowBounds(startMs, endMs, cutoffMs);
     }
 
@@ -538,6 +591,178 @@ sealed class KidControlService
             "expired" => "Истекло автоматически",
             "active" => "Активная сессия",
             _ => "Неизвестно"
+        };
+    }
+
+    private static UserAuditEvent MapAuditEvent(AuditLogRecord row)
+    {
+        return new UserAuditEvent(
+            row.Id,
+            row.OccurredAtMs,
+            row.Action,
+            AuditActionLabel(row.Action),
+            row.RequestedWindowMinutes,
+            row.GrantedWindowMinutes,
+            row.GrantedUntilMs,
+            row.Details,
+            AuditDetailsLabel(row.Details),
+            0
+        );
+    }
+
+    private static List<UserAuditEvent> BuildAuditEventsForStats(
+        List<SessionHistoryRecord> sessions,
+        List<AuditLogRecord> auditRows,
+        long rangeStartUtcMs,
+        long rangeEndUtcMs)
+    {
+        var events = auditRows.Select(MapAuditEvent).ToList();
+        var eventKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in events)
+        {
+            eventKeys.Add(MakeAuditEventKey(item.Action, item.OccurredAtMs));
+        }
+
+        long syntheticId = -1;
+        foreach (var session in sessions)
+        {
+            if (session.StartedAtMs >= rangeStartUtcMs && session.StartedAtMs < rangeEndUtcMs)
+            {
+                var startKey = MakeAuditEventKey("request_started", session.StartedAtMs);
+                if (!eventKeys.Contains(startKey))
+                {
+                    events.Add(new UserAuditEvent(
+                        syntheticId--,
+                        session.StartedAtMs,
+                        "request_started",
+                        AuditActionLabel("request_started"),
+                        null,
+                        null,
+                        session.ExpiresAtMs,
+                        "derived_from_session_history",
+                        AuditDetailsLabel("derived_from_session_history"),
+                        session.Id));
+                    eventKeys.Add(startKey);
+                }
+            }
+
+            if (session.EndedAtMs is null)
+            {
+                continue;
+            }
+
+            var endMs = session.EndedAtMs.Value;
+            if (endMs < rangeStartUtcMs || endMs >= rangeEndUtcMs)
+            {
+                continue;
+            }
+
+            var endAction = string.Equals(session.EndedReason, "manual", StringComparison.OrdinalIgnoreCase)
+                ? "disable"
+                : "expired";
+            var endKey = MakeAuditEventKey(endAction, endMs);
+            if (eventKeys.Contains(endKey))
+            {
+                continue;
+            }
+
+            events.Add(new UserAuditEvent(
+                syntheticId--,
+                endMs,
+                endAction,
+                AuditActionLabel(endAction),
+                null,
+                null,
+                null,
+                "derived_from_session_history",
+                AuditDetailsLabel("derived_from_session_history"),
+                session.Id));
+            eventKeys.Add(endKey);
+        }
+
+        return events
+            .Select(e => e with { SessionId = ResolveSessionId(e, sessions) })
+            .Where(e => e.SessionId > 0)
+            .OrderByDescending(e => e.OccurredAtMs)
+            .ThenByDescending(e => e.Id)
+            .ToList();
+    }
+
+    private static long ResolveSessionId(UserAuditEvent evt, List<SessionHistoryRecord> sessions)
+    {
+        if (evt.SessionId > 0)
+        {
+            return evt.SessionId;
+        }
+
+        const long tolMs = 2000;
+
+        var linked = evt.Action switch
+        {
+            "request_started" => sessions
+                .Where(s => Math.Abs(s.StartedAtMs - evt.OccurredAtMs) <= tolMs),
+            "disable" => sessions
+                .Where(s => s.EndedAtMs is not null
+                    && string.Equals(s.EndedReason, "manual", StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs(s.EndedAtMs.Value - evt.OccurredAtMs) <= tolMs),
+            "expired" => sessions
+                .Where(s => s.EndedAtMs is not null
+                    && !string.Equals(s.EndedReason, "manual", StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs(s.EndedAtMs.Value - evt.OccurredAtMs) <= tolMs),
+            "window_extended" => sessions
+                .Where(s => evt.OccurredAtMs >= s.StartedAtMs - tolMs && evt.OccurredAtMs <= (s.EndedAtMs ?? s.ExpiresAtMs) + tolMs),
+            "window_shortened" => sessions
+                .Where(s => evt.OccurredAtMs >= s.StartedAtMs - tolMs && evt.OccurredAtMs <= (s.EndedAtMs ?? s.ExpiresAtMs) + tolMs),
+            "window_updated" => sessions
+                .Where(s => evt.OccurredAtMs >= s.StartedAtMs - tolMs && evt.OccurredAtMs <= (s.EndedAtMs ?? s.ExpiresAtMs) + tolMs),
+            "request" => sessions
+                .Where(s => evt.OccurredAtMs >= s.StartedAtMs - tolMs && evt.OccurredAtMs <= (s.EndedAtMs ?? s.ExpiresAtMs) + tolMs),
+            _ => Enumerable.Empty<SessionHistoryRecord>()
+        };
+
+        var session = linked
+            .OrderByDescending(s => s.StartedAtMs)
+            .FirstOrDefault();
+
+        return session?.Id ?? 0;
+    }
+
+    private static string MakeAuditEventKey(string action, long occurredAtMs)
+    {
+        return $"{action}|{occurredAtMs}";
+    }
+
+    private static string AuditActionLabel(string action)
+    {
+        return action switch
+        {
+            "request_started" => "Доступ запрошен",
+            "window_extended" => "Окно увеличено",
+            "window_shortened" => "Окно уменьшено",
+            "window_updated" => "Параметры окна обновлены",
+            "disable" => "Отключено кнопкой",
+            "disable_no_session" => "Отключение без активной сессии",
+            "expired" => "Время истекло автоматически",
+            "request" => "Доступ запрошен/изменен",
+            _ => action
+        };
+    }
+
+    private static string? AuditDetailsLabel(string? details)
+    {
+        if (string.IsNullOrWhiteSpace(details))
+        {
+            return null;
+        }
+
+        return details switch
+        {
+            "window_clipped_by_limits" => "Окно ограничено остатком лимита/границей дня",
+            "window_applied" => "Окно применено",
+            "active_session_stopped" => "Активная сессия остановлена",
+            "no_active_session" => "Активной сессии не было",
+            "derived_from_session_history" => "Событие восстановлено из истории сессий",
+            _ => details
         };
     }
 
@@ -858,12 +1083,17 @@ sealed class SessionRepository
             using var conn = OpenConnection();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-                SELECT COALESCE(SUM(ended_at_ms - started_at_ms), 0)
+                SELECT COALESCE(SUM(
+                    CASE
+                      WHEN ended_at_ms <= $start_ms OR started_at_ms >= $end_ms THEN 0
+                      ELSE MIN(ended_at_ms, $end_ms) - MAX(started_at_ms, $start_ms)
+                    END
+                ), 0)
                 FROM sessions
                 WHERE user_name = $user_name
                   AND ended_at_ms IS NOT NULL
-                  AND started_at_ms >= $start_ms
-                  AND started_at_ms < $end_ms";
+                  AND started_at_ms < $end_ms
+                  AND ended_at_ms > $start_ms";
             cmd.Parameters.AddWithValue("$user_name", userName);
             cmd.Parameters.AddWithValue("$start_ms", startMs);
             cmd.Parameters.AddWithValue("$end_ms", endMs);
@@ -905,7 +1135,7 @@ sealed class SessionRepository
         }
     }
 
-    public void EndSession(long id, long endedAtMs, string reason, long nowMs)
+    public bool EndSession(long id, long endedAtMs, string reason, long nowMs)
     {
         lock (_sync)
         {
@@ -919,6 +1149,92 @@ sealed class SessionRepository
             cmd.Parameters.AddWithValue("$ended_at_ms", endedAtMs);
             cmd.Parameters.AddWithValue("$reason", reason);
             cmd.Parameters.AddWithValue("$now_ms", nowMs);
+            return cmd.ExecuteNonQuery() > 0;
+        }
+    }
+
+    public List<AuditLogRecord> ListAuditEventsIntersectingRange(string userName, long rangeStartMs, long rangeEndMs, int limit)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT id, target_user, action, requested_window_minutes, granted_window_minutes, granted_until_ms, details, occurred_at_ms
+                FROM audit_log
+                WHERE target_user = $user_name
+                  AND occurred_at_ms >= $range_start_ms
+                  AND occurred_at_ms < $range_end_ms
+                ORDER BY occurred_at_ms DESC, id DESC
+                LIMIT $limit";
+            cmd.Parameters.AddWithValue("$user_name", userName);
+            cmd.Parameters.AddWithValue("$range_start_ms", rangeStartMs);
+            cmd.Parameters.AddWithValue("$range_end_ms", rangeEndMs);
+            cmd.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 2000));
+
+            using var reader = cmd.ExecuteReader();
+            var result = new List<AuditLogRecord>();
+            while (reader.Read())
+            {
+                result.Add(new AuditLogRecord(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                    reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                    reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                    reader.IsDBNull(6) ? null : reader.GetString(6),
+                    reader.GetInt64(7)
+                ));
+            }
+
+            return result;
+        }
+    }
+
+    public void InsertAuditEvent(
+        string targetUser,
+        string action,
+        int? requestedWindowMinutes,
+        int? grantedWindowMinutes,
+        long? grantedUntilMs,
+        string? details,
+        long occurredAtMs)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                INSERT INTO audit_log (
+                  target_user,
+                  action,
+                  actor,
+                  requested_window_minutes,
+                  granted_window_minutes,
+                  granted_until_ms,
+                  details,
+                  occurred_at_ms
+                )
+                VALUES (
+                  $target_user,
+                  $action,
+                  $actor,
+                  $requested_window_minutes,
+                  $granted_window_minutes,
+                  $granted_until_ms,
+                  $details,
+                  $occurred_at_ms
+                )";
+
+            cmd.Parameters.AddWithValue("$target_user", targetUser);
+            cmd.Parameters.AddWithValue("$action", action);
+            cmd.Parameters.AddWithValue("$actor", string.Empty);
+            cmd.Parameters.AddWithValue("$requested_window_minutes", (object?)requestedWindowMinutes ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$granted_window_minutes", (object?)grantedWindowMinutes ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$granted_until_ms", (object?)grantedUntilMs ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$details", (object?)details ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$occurred_at_ms", occurredAtMs);
             cmd.ExecuteNonQuery();
         }
     }
@@ -947,6 +1263,24 @@ sealed class SessionRepository
 
                 CREATE INDEX IF NOT EXISTS idx_sessions_user_start
                   ON sessions (user_name, started_at_ms);
+
+                CREATE TABLE IF NOT EXISTS audit_log (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  target_user TEXT NOT NULL,
+                  action TEXT NOT NULL,
+                  actor TEXT NOT NULL,
+                  requested_window_minutes INTEGER,
+                  granted_window_minutes INTEGER,
+                  granted_until_ms INTEGER,
+                  details TEXT,
+                  occurred_at_ms INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_audit_log_user_time
+                  ON audit_log (target_user, occurred_at_ms DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_audit_log_time
+                  ON audit_log (occurred_at_ms DESC);
             ";
             cmd.ExecuteNonQuery();
         }
@@ -1247,6 +1581,7 @@ sealed record DayWindowConfig(int StartMinutes, int EndMinutes);
 sealed record UserLimitConfig(string Name, string DisplayName, int DefaultWindowMinutes, Dictionary<string, int> LimitsMinutes);
 sealed record SessionRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs);
 sealed record SessionHistoryRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs, long? EndedAtMs, string? EndedReason);
+sealed record AuditLogRecord(long Id, string TargetUser, string Action, int? RequestedWindowMinutes, int? GrantedWindowMinutes, long? GrantedUntilMs, string? Details, long OccurredAtMs);
 sealed record ActiveSessionRow(long Id, long StartedAtMs, long EndsAtMs, int RemainingSeconds, int TotalSeconds);
 sealed record UserStateRow(
     string Name,
@@ -1285,6 +1620,18 @@ sealed record RequestWindowDto(int? WindowMinutes);
 sealed record RequestResponse(bool Ok, string User, int RequestedWindowMinutes, long GrantedUntilMs, StateResponse State);
 sealed record DisableResponse(bool Ok, string User, StateResponse State);
 sealed record UserStatsSegment(long SessionId, long StartedAtMs, long EndedAtMs, string EndReason, string EndReasonLabel);
+sealed record UserAuditEvent(
+    long Id,
+    long OccurredAtMs,
+    string Action,
+    string ActionLabel,
+    int? RequestedWindowMinutes,
+    int? GrantedWindowMinutes,
+    long? GrantedUntilMs,
+    string? Details,
+    string? DetailsLabel,
+    long SessionId
+);
 sealed record UserStatsResponse(
     string User,
     string DisplayName,
@@ -1293,5 +1640,6 @@ sealed record UserStatsResponse(
     long ServerTimeMs,
     long RangeStartMs,
     long RangeEndMs,
-    List<UserStatsSegment> Segments
+    List<UserStatsSegment> Segments,
+    List<UserAuditEvent> AuditEvents
 );
