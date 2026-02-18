@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Mail;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -10,6 +12,7 @@ var runtime = RuntimeSettings.Load(builder.Configuration);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddSingleton<AccessConfigProvider>();
 builder.Services.AddSingleton<SessionRepository>();
+builder.Services.AddSingleton<EmailNotificationService>();
 builder.Services.AddHttpClient<MikrotikClient>((sp, client) =>
 {
     var settings = sp.GetRequiredService<RuntimeSettings>();
@@ -162,16 +165,23 @@ sealed class KidControlService
     private readonly AccessConfigProvider _configProvider;
     private readonly SessionRepository _repo;
     private readonly MikrotikClient _mikrotik;
+    private readonly EmailNotificationService _email;
 
-    public KidControlService(AccessConfigProvider configProvider, SessionRepository repo, MikrotikClient mikrotik)
+    public KidControlService(
+        AccessConfigProvider configProvider,
+        SessionRepository repo,
+        MikrotikClient mikrotik,
+        EmailNotificationService email)
     {
         _configProvider = configProvider;
         _repo = repo;
         _mikrotik = mikrotik;
+        _email = email;
     }
 
     public void SweepExpiredSessions()
     {
+        var cfg = _configProvider.GetConfig();
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var expired = _repo.ListExpiredActiveSessions(nowMs);
         foreach (var session in expired)
@@ -188,8 +198,16 @@ sealed class KidControlService
                     session.ExpiresAtMs,
                     null,
                     session.ExpiresAtMs);
+
+                var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, session.UserName, StringComparison.Ordinal));
+                if (userCfg is not null)
+                {
+                    NotifyParentsExpired(cfg, userCfg, session.ExpiresAtMs);
+                }
             }
         }
+
+        NotifySoonEndingSessions(cfg, nowMs);
     }
 
     public async Task<List<Dictionary<string, string>>> GetKidControlAsync(CancellationToken ct)
@@ -376,6 +394,15 @@ sealed class KidControlService
             auditDetails,
             day.NowMs);
 
+        NotifyParentsAccessChanged(
+            cfg,
+            userCfg,
+            auditAction,
+            requestedWindowMinutes,
+            grantedWindowMinutes,
+            startMs,
+            targetEndMs);
+
         var state = await BuildStateAsync(cfg, ct);
         return new RequestResponse(true, userCfg.Name, requestedWindowMinutes, targetEndMs, state);
     }
@@ -417,6 +444,8 @@ sealed class KidControlService
             null,
             null,
             day.NowMs);
+
+        NotifyParentsDisabled(cfg, userCfg, hadActiveSession, day.NowMs);
 
         var state = await BuildStateAsync(cfg, ct);
         return new DisableResponse(true, userCfg.Name, state);
@@ -518,6 +547,142 @@ sealed class KidControlService
         );
     }
 
+    private void NotifySoonEndingSessions(AccessConfig cfg, long nowMs)
+    {
+        if (cfg.EndingSoonMinutes <= 0)
+        {
+            return;
+        }
+
+        var deadlineMs = nowMs + (cfg.EndingSoonMinutes * 60_000L);
+        var soonSessions = _repo.ListSoonEndingCandidates(nowMs, deadlineMs);
+        foreach (var session in soonSessions)
+        {
+            var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, session.UserName, StringComparison.Ordinal));
+            if (userCfg is null)
+            {
+                _repo.MarkSoonEndingNotified(session.Id, nowMs);
+                continue;
+            }
+
+            var hasAnyRecipient = userCfg.ParentEmails.Count > 0 || !string.IsNullOrWhiteSpace(userCfg.Email);
+            var remainingMinutes = Math.Max(1, (int)Math.Ceiling((session.ExpiresAtMs - nowMs) / 60_000d));
+
+            var parentSent = NotifyParentsSoonEnding(cfg, userCfg, remainingMinutes, session.ExpiresAtMs);
+            var childSent = NotifyChildSoonEnding(cfg, userCfg, remainingMinutes, session.ExpiresAtMs);
+            if (!hasAnyRecipient || parentSent || childSent)
+            {
+                _repo.MarkSoonEndingNotified(session.Id, nowMs);
+            }
+        }
+    }
+
+    private void NotifyParentsAccessChanged(
+        AccessConfig cfg,
+        UserLimitConfig userCfg,
+        string action,
+        int requestedWindowMinutes,
+        int grantedWindowMinutes,
+        long startMs,
+        long endMs)
+    {
+        if (userCfg.ParentEmails.Count == 0)
+        {
+            return;
+        }
+
+        var actionLabel = AuditActionLabel(action);
+        var subject = $"KidControl: {userCfg.DisplayName} - {actionLabel}";
+        var body = string.Join('\n', [
+            $"Пользователь: {userCfg.DisplayName} ({userCfg.Name})",
+            $"Событие: {actionLabel}",
+            $"Запрошено: {requestedWindowMinutes} мин",
+            $"Выдано: {grantedWindowMinutes} мин",
+            $"Начало сессии: {FormatLocalDateTime(startMs, cfg.TimeZone)}",
+            $"Окончание сессии: {FormatLocalDateTime(endMs, cfg.TimeZone)}",
+            $"Таймзона: {cfg.TimeZone.Id}"
+        ]);
+
+        _email.Send(userCfg.ParentEmails, subject, body);
+    }
+
+    private void NotifyParentsDisabled(AccessConfig cfg, UserLimitConfig userCfg, bool hadActiveSession, long occurredAtMs)
+    {
+        if (userCfg.ParentEmails.Count == 0)
+        {
+            return;
+        }
+
+        var actionLabel = hadActiveSession ? "Отключено кнопкой" : "Отключение без активной сессии";
+        var subject = $"KidControl: {userCfg.DisplayName} - {actionLabel}";
+        var body = string.Join('\n', [
+            $"Пользователь: {userCfg.DisplayName} ({userCfg.Name})",
+            $"Событие: {actionLabel}",
+            $"Время: {FormatLocalDateTime(occurredAtMs, cfg.TimeZone)}",
+            $"Таймзона: {cfg.TimeZone.Id}"
+        ]);
+
+        _email.Send(userCfg.ParentEmails, subject, body);
+    }
+
+    private void NotifyParentsExpired(AccessConfig cfg, UserLimitConfig userCfg, long expiredAtMs)
+    {
+        if (userCfg.ParentEmails.Count == 0)
+        {
+            return;
+        }
+
+        var subject = $"KidControl: {userCfg.DisplayName} - Время доступа истекло";
+        var body = string.Join('\n', [
+            $"Пользователь: {userCfg.DisplayName} ({userCfg.Name})",
+            $"Событие: Время доступа истекло автоматически",
+            $"Время: {FormatLocalDateTime(expiredAtMs, cfg.TimeZone)}",
+            $"Таймзона: {cfg.TimeZone.Id}"
+        ]);
+
+        _email.Send(userCfg.ParentEmails, subject, body);
+    }
+
+    private bool NotifyParentsSoonEnding(AccessConfig cfg, UserLimitConfig userCfg, int remainingMinutes, long expiresAtMs)
+    {
+        if (userCfg.ParentEmails.Count == 0)
+        {
+            return false;
+        }
+
+        var subject = $"KidControl: {userCfg.DisplayName} - Доступ скоро закончится";
+        var body = string.Join('\n', [
+            $"Пользователь: {userCfg.DisplayName} ({userCfg.Name})",
+            $"Осталось: примерно {remainingMinutes} мин",
+            $"Окончание: {FormatLocalDateTime(expiresAtMs, cfg.TimeZone)}",
+            $"Таймзона: {cfg.TimeZone.Id}"
+        ]);
+
+        return _email.Send(userCfg.ParentEmails, subject, body);
+    }
+
+    private bool NotifyChildSoonEnding(AccessConfig cfg, UserLimitConfig userCfg, int remainingMinutes, long expiresAtMs)
+    {
+        if (string.IsNullOrWhiteSpace(userCfg.Email))
+        {
+            return false;
+        }
+
+        var subject = $"KidControl: {userCfg.DisplayName} - До отключения {remainingMinutes} мин";
+        var body = string.Join('\n', [
+            $"Привет, {userCfg.DisplayName}.",
+            $"Доступ в интернет скоро закончится.",
+            $"Осталось: примерно {remainingMinutes} мин",
+            $"Отключение: {FormatLocalDateTime(expiresAtMs, cfg.TimeZone)}",
+            $"Таймзона: {cfg.TimeZone.Id}"
+        ]);
+
+        return _email.Send(
+            [userCfg.Email!],
+            subject,
+            body);
+    }
+
     private UsageState GetUsageState(string userName, long startOfDayMs, long nextDayMs, long nowMs)
     {
         var completedMs = _repo.SumCompletedUsageMs(userName, startOfDayMs, nextDayMs);
@@ -560,6 +725,12 @@ sealed class KidControlService
     {
         var local = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(ms), zone);
         return local.ToString("HH:mm", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatLocalDateTime(long ms, TimeZoneInfo zone)
+    {
+        var local = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(ms), zone);
+        return local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
     }
 
     private static long ToUnixMilliseconds(TimeZoneInfo zone, DateTime localUnspecified)
@@ -966,6 +1137,93 @@ sealed class MikrotikClient
     }
 }
 
+sealed class EmailNotificationService
+{
+    private readonly RuntimeSettings _settings;
+    private readonly ILogger<EmailNotificationService> _logger;
+
+    public EmailNotificationService(RuntimeSettings settings, ILogger<EmailNotificationService> logger)
+    {
+        _settings = settings;
+        _logger = logger;
+    }
+
+    public bool Send(IEnumerable<string> recipients, string subject, string body)
+    {
+        var targetRecipients = recipients
+            .Select(r => r?.Trim() ?? string.Empty)
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (targetRecipients.Count == 0)
+        {
+            return false;
+        }
+
+        if (!IsConfigured())
+        {
+            return false;
+        }
+
+        try
+        {
+            using var message = new MailMessage
+            {
+                From = new MailAddress(_settings.SmtpFrom),
+                Subject = subject,
+                Body = body,
+                IsBodyHtml = false
+            };
+
+            foreach (var recipient in targetRecipients)
+            {
+                message.To.Add(recipient);
+            }
+
+            using var client = new SmtpClient(_settings.SmtpHost, _settings.SmtpPort)
+            {
+                EnableSsl = _settings.SmtpUseSsl,
+                DeliveryMethod = SmtpDeliveryMethod.Network
+            };
+
+            if (!string.IsNullOrWhiteSpace(_settings.SmtpUser))
+            {
+                client.Credentials = new NetworkCredential(_settings.SmtpUser, _settings.SmtpPassword ?? string.Empty);
+            }
+
+            client.Send(message);
+            return true;
+        }
+        catch (SmtpFailedRecipientsException ex)
+        {
+            _logger.LogError(ex, "SMTP recipients rejected for email notification");
+            return false;
+        }
+        catch (SmtpException ex)
+        {
+            _logger.LogError(ex, "SMTP error while sending email notification");
+            return false;
+        }
+        catch (FormatException ex)
+        {
+            _logger.LogError(ex, "Invalid email format in notification recipients");
+            return false;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "Invalid SMTP operation while sending notification");
+            return false;
+        }
+    }
+
+    private bool IsConfigured()
+    {
+        return !string.IsNullOrWhiteSpace(_settings.SmtpHost)
+            && !string.IsNullOrWhiteSpace(_settings.SmtpFrom)
+            && _settings.SmtpPort > 0;
+    }
+}
+
 sealed class SessionRepository
 {
     private readonly string _connectionString;
@@ -1041,6 +1299,40 @@ sealed class SessionRepository
         }
     }
 
+    public List<SoonEndingSessionRecord> ListSoonEndingCandidates(long nowMs, long deadlineMs)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT id, user_name, started_at_ms, expires_at_ms, soon_notified_at_ms
+                FROM sessions
+                WHERE ended_at_ms IS NULL
+                  AND expires_at_ms > $now_ms
+                  AND expires_at_ms <= $deadline_ms
+                  AND (soon_notified_at_ms IS NULL OR soon_notified_at_ms = 0)
+                ORDER BY expires_at_ms ASC";
+            cmd.Parameters.AddWithValue("$now_ms", nowMs);
+            cmd.Parameters.AddWithValue("$deadline_ms", deadlineMs);
+
+            using var reader = cmd.ExecuteReader();
+            var result = new List<SoonEndingSessionRecord>();
+            while (reader.Read())
+            {
+                result.Add(new SoonEndingSessionRecord(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetInt64(2),
+                    reader.GetInt64(3),
+                    reader.IsDBNull(4) ? null : reader.GetInt64(4)
+                ));
+            }
+
+            return result;
+        }
+    }
+
     public List<SessionHistoryRecord> ListSessionsIntersectingRange(string userName, long rangeStartMs, long rangeEndMs)
     {
         lock (_sync)
@@ -1108,8 +1400,8 @@ sealed class SessionRepository
             using var conn = OpenConnection();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-                INSERT INTO sessions (user_name, started_at_ms, expires_at_ms, ended_at_ms, ended_reason, created_at_ms, updated_at_ms)
-                VALUES ($user_name, $started_at_ms, $expires_at_ms, NULL, NULL, $now_ms, $now_ms)";
+                INSERT INTO sessions (user_name, started_at_ms, expires_at_ms, ended_at_ms, ended_reason, soon_notified_at_ms, created_at_ms, updated_at_ms)
+                VALUES ($user_name, $started_at_ms, $expires_at_ms, NULL, NULL, NULL, $now_ms, $now_ms)";
             cmd.Parameters.AddWithValue("$user_name", userName);
             cmd.Parameters.AddWithValue("$started_at_ms", startedAtMs);
             cmd.Parameters.AddWithValue("$expires_at_ms", expiresAtMs);
@@ -1126,12 +1418,31 @@ sealed class SessionRepository
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
                 UPDATE sessions
-                SET expires_at_ms = $expires_at_ms, updated_at_ms = $now_ms
+                SET expires_at_ms = $expires_at_ms, soon_notified_at_ms = NULL, updated_at_ms = $now_ms
                 WHERE id = $id AND ended_at_ms IS NULL";
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$expires_at_ms", expiresAtMs);
             cmd.Parameters.AddWithValue("$now_ms", nowMs);
             cmd.ExecuteNonQuery();
+        }
+    }
+
+    public bool MarkSoonEndingNotified(long id, long nowMs)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE sessions
+                SET soon_notified_at_ms = $soon_notified_at_ms, updated_at_ms = $now_ms
+                WHERE id = $id
+                  AND ended_at_ms IS NULL
+                  AND (soon_notified_at_ms IS NULL OR soon_notified_at_ms = 0)";
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.Parameters.AddWithValue("$soon_notified_at_ms", nowMs);
+            cmd.Parameters.AddWithValue("$now_ms", nowMs);
+            return cmd.ExecuteNonQuery() > 0;
         }
     }
 
@@ -1253,6 +1564,7 @@ sealed class SessionRepository
                   expires_at_ms INTEGER NOT NULL,
                   ended_at_ms INTEGER,
                   ended_reason TEXT,
+                  soon_notified_at_ms INTEGER,
                   created_at_ms INTEGER NOT NULL,
                   updated_at_ms INTEGER NOT NULL
                 );
@@ -1283,7 +1595,27 @@ sealed class SessionRepository
                   ON audit_log (occurred_at_ms DESC);
             ";
             cmd.ExecuteNonQuery();
+
+            EnsureColumnExists(conn, "sessions", "soon_notified_at_ms", "INTEGER");
         }
+    }
+
+    private static void EnsureColumnExists(SqliteConnection conn, string tableName, string columnName, string columnTypeSql)
+    {
+        using var checkCmd = conn.CreateCommand();
+        checkCmd.CommandText = $"PRAGMA table_info({tableName})";
+        using var reader = checkCmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alterCmd = conn.CreateCommand();
+        alterCmd.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnTypeSql}";
+        alterCmd.ExecuteNonQuery();
     }
 
     private SqliteConnection OpenConnection()
@@ -1354,6 +1686,7 @@ sealed class AccessConfigProvider
         var timezone = ResolveTimeZone(timezoneName);
         var defaultWindow = ReadInt(root, "defaultWindowMinutes", 120);
         var graceMinutes = ReadInt(root, "graceMinutes", 15);
+        var endingSoonMinutes = ReadInt(root, "endingSoonMinutes", 10);
         var dayWindows = ParseDayWindows(root);
 
         if (!root.TryGetProperty("users", out var usersEl) || usersEl.ValueKind != JsonValueKind.Array)
@@ -1373,6 +1706,8 @@ sealed class AccessConfigProvider
             var displayName = userEl.TryGetProperty("displayName", out var displayEl)
                 ? (displayEl.GetString() ?? name).Trim()
                 : name;
+            var email = ReadEmail(userEl, "email");
+            var parentEmails = ReadEmailList(userEl, "parentEmail");
 
             var userDefaultWindow = ReadInt(userEl, "defaultWindowMinutes", defaultWindow);
 
@@ -1392,10 +1727,10 @@ sealed class AccessConfigProvider
                 }
             }
 
-            users.Add(new UserLimitConfig(name, displayName, userDefaultWindow, limits));
+            users.Add(new UserLimitConfig(name, displayName, email, parentEmails, userDefaultWindow, limits));
         }
 
-        return new AccessConfig(timezone, defaultWindow, graceMinutes, dayWindows, users);
+        return new AccessConfig(timezone, defaultWindow, graceMinutes, endingSoonMinutes, dayWindows, users);
     }
 
     private static Dictionary<string, DayWindowConfig> ParseDayWindows(JsonElement root)
@@ -1441,6 +1776,60 @@ sealed class AccessConfigProvider
             JsonValueKind.String when int.TryParse(el.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s) => Math.Max(0, s),
             _ => Math.Max(0, fallback)
         };
+    }
+
+    private static string? ReadEmail(JsonElement obj, string property)
+    {
+        if (!obj.TryGetProperty(property, out var el) || el.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        var value = (el.GetString() ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static List<string> ReadEmailList(JsonElement obj, string property)
+    {
+        if (!obj.TryGetProperty(property, out var el))
+        {
+            return [];
+        }
+
+        var result = new List<string>();
+        if (el.ValueKind == JsonValueKind.String)
+        {
+            var value = (el.GetString() ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                result.Add(value);
+            }
+
+            return result;
+        }
+
+        if (el.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var value = (item.GetString() ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                result.Add(value);
+            }
+        }
+
+        return result
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static int ParseTimeOfDayOrDefault(string? raw, int fallbackMinutes, string fieldName)
@@ -1521,6 +1910,12 @@ sealed class RuntimeSettings
     public required int ConfigCacheTtlMs { get; init; }
     public required int SweepIntervalSeconds { get; init; }
     public required string TimezoneOverride { get; init; }
+    public required string SmtpHost { get; init; }
+    public required int SmtpPort { get; init; }
+    public required string SmtpUser { get; init; }
+    public required string SmtpPassword { get; init; }
+    public required string SmtpFrom { get; init; }
+    public required bool SmtpUseSsl { get; init; }
 
     public static RuntimeSettings Load(IConfiguration cfg)
     {
@@ -1551,7 +1946,13 @@ sealed class RuntimeSettings
             LimitsConfigPath = cfg["LIMITS_CONFIG_PATH"] ?? "/app/config/kid-access-config.json",
             ConfigCacheTtlMs = ParseInt(cfg["CONFIG_CACHE_TTL_MS"], 5000),
             SweepIntervalSeconds = ParseInt(cfg["SWEEP_INTERVAL_SECONDS"], 10),
-            TimezoneOverride = cfg["APP_TIMEZONE"] ?? cfg["TIMEZONE"] ?? string.Empty
+            TimezoneOverride = cfg["APP_TIMEZONE"] ?? cfg["TIMEZONE"] ?? string.Empty,
+            SmtpHost = (cfg["SMTP_HOST"] ?? string.Empty).Trim(),
+            SmtpPort = ParseInt(cfg["SMTP_PORT"], 587),
+            SmtpUser = (cfg["SMTP_USER"] ?? string.Empty).Trim(),
+            SmtpPassword = cfg["SMTP_PASSWORD"] ?? string.Empty,
+            SmtpFrom = (cfg["SMTP_FROM"] ?? string.Empty).Trim(),
+            SmtpUseSsl = ParseBool(cfg["SMTP_USE_SSL"], true)
         };
     }
 
@@ -1560,6 +1961,26 @@ sealed class RuntimeSettings
         if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
         {
             return Math.Max(1, parsed);
+        }
+
+        return fallback;
+    }
+
+    private static bool ParseBool(string? value, bool fallback)
+    {
+        if (bool.TryParse(value, out var parsed))
+        {
+            return parsed;
+        }
+
+        if (string.Equals(value, "1", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (string.Equals(value, "0", StringComparison.Ordinal))
+        {
+            return false;
         }
 
         return fallback;
@@ -1576,10 +1997,23 @@ sealed class AppHttpException : Exception
     public int StatusCode { get; }
 }
 
-sealed record AccessConfig(TimeZoneInfo TimeZone, int DefaultWindowMinutes, int GraceMinutes, Dictionary<string, DayWindowConfig> DayWindows, List<UserLimitConfig> Users);
+sealed record AccessConfig(
+    TimeZoneInfo TimeZone,
+    int DefaultWindowMinutes,
+    int GraceMinutes,
+    int EndingSoonMinutes,
+    Dictionary<string, DayWindowConfig> DayWindows,
+    List<UserLimitConfig> Users);
 sealed record DayWindowConfig(int StartMinutes, int EndMinutes);
-sealed record UserLimitConfig(string Name, string DisplayName, int DefaultWindowMinutes, Dictionary<string, int> LimitsMinutes);
+sealed record UserLimitConfig(
+    string Name,
+    string DisplayName,
+    string? Email,
+    List<string> ParentEmails,
+    int DefaultWindowMinutes,
+    Dictionary<string, int> LimitsMinutes);
 sealed record SessionRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs);
+sealed record SoonEndingSessionRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs, long? SoonNotifiedAtMs);
 sealed record SessionHistoryRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs, long? EndedAtMs, string? EndedReason);
 sealed record AuditLogRecord(long Id, string TargetUser, string Action, int? RequestedWindowMinutes, int? GrantedWindowMinutes, long? GrantedUntilMs, string? Details, long OccurredAtMs);
 sealed record ActiveSessionRow(long Id, long StartedAtMs, long EndsAtMs, int RemainingSeconds, int TotalSeconds);
