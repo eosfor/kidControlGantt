@@ -9,6 +9,7 @@
 - Для каждого пользователя отображает:
   - лимит на текущий день,
   - остаток до лимита,
+  - статус MikroTik (`active`, `blocked`, `paused` и их комбинации),
   - таймер активного окна,
   - размер окна,
   - действия `Запросить/продлить доступ` и `Отключить`.
@@ -33,8 +34,17 @@
 
 ## Архитектура
 
-- `app/Program.cs` — API, бизнес-логика лимитов/окон, интеграция с MikroTik, фоновые задачи.
+- `app/Program.cs` — точка входа, DI и HTTP-роуты.
+- `app/Services/` — бизнес-логика и интеграции:
+  - `KidControlService.cs` — правила лимитов/окон и orchestration.
+  - `MikrotikClient.cs` — REST-вызовы MikroTik Kid Control.
+  - `EmailNotificationService.cs` — SMTP-уведомления.
+  - `SessionSweepHostedService.cs` — фоновой sweep просроченных сессий.
+- `app/Persistence/SessionRepository.cs` — SQLite слой хранения сессий и audit log.
+- `app/Config/` — чтение и кэширование JSON-конфига + runtime настройки env.
+- `app/Models/Contracts.cs` — DTO/контракты API и внутренние записи.
 - `app/wwwroot/index.html` — UI таблицы и таймеров.
+- `app/wwwroot/user-stats.html` — страница статистики пользователя (Gantt + audit).
 - `config/kid-access-config.json` — рабочий конфиг лимитов.
 - `config/kid-access-config.example.json` — пример конфига.
 - SQLite файл — путь из `DB_PATH` (по умолчанию `/data/kid-control-state.db`).
@@ -106,6 +116,7 @@
 - `GET /health` — healthcheck.
 - `GET /api/kid-control` — сырой список MikroTik kid-control.
 - `GET /api/state` — состояние для UI.
+  - Для каждого пользователя возвращается `mikrotikStatus` (например: `active`, `blocked`, `paused`, `blocked+paused`).
 - `GET /api/users/{name}/stats` — статистика пользователя: Gantt + `auditEvents` за период.
 - `POST /api/users/{name}/request` — запрос/продление окна.
   - body: `{ "windowMinutes": 120 }`
@@ -130,7 +141,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-UI/API: `http://<host>:3030`
+UI/API: `http://<host>:3031`
 
 ## Запуск в Docker Desktop (пошагово)
 
@@ -149,8 +160,8 @@ UI/API: `http://<host>:3030`
    docker compose up -d --build
    ```
 6. Проверьте доступ:
-   - UI: `http://localhost:3030`
-   - health: `http://localhost:3030/health`
+   - UI: `http://localhost:3031`
+   - health: `http://localhost:3031/health`
 
 Полезные команды:
 

@@ -407,15 +407,21 @@
 
     function buildUserStatus(row) {
       if (!row.existsInMikrotik) {
-        return { label: 'нет в MikroTik', className: 'danger' };
+        return { label: 'not-found', className: 'danger' };
       }
-      if (row.mikrotikPaused) {
-        return { label: 'пауза', className: 'warning' };
+
+      const status = String(row.mikrotikStatus || 'unknown').toLowerCase();
+      if (status.includes('disabled')) {
+        return { label: status, className: 'danger' };
       }
-      if (row.mikrotikDisabled) {
-        return { label: 'отключен', className: 'warning' };
+      if (status.includes('blocked') || status.includes('paused')) {
+        return { label: status, className: 'warning' };
       }
-      return { label: 'активен', className: 'ok' };
+      if (status.includes('active')) {
+        return { label: status, className: 'ok' };
+      }
+
+      return { label: status, className: 'muted' };
     }
 
     function getDynamicUsage(row, nowMs) {

@@ -9,6 +9,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - Per user UI shows:
   - current day limit,
   - remaining time to limit,
+  - MikroTik status (`active`, `blocked`, `paused`, and combinations),
   - active window timer,
   - window size,
   - `Request/Extend` and `Disable` actions.
@@ -33,8 +34,17 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 
 ## Architecture
 
-- `app/Program.cs` - API + business logic + MikroTik integration + background sweep.
+- `app/Program.cs` - app bootstrap, DI wiring, and HTTP routes.
+- `app/Services/`:
+  - `KidControlService.cs` - core limit/window rules and orchestration.
+  - `MikrotikClient.cs` - MikroTik Kid Control REST API client.
+  - `EmailNotificationService.cs` - SMTP notifications.
+  - `SessionSweepHostedService.cs` - background sweep for expired sessions.
+- `app/Persistence/SessionRepository.cs` - SQLite persistence for sessions and audit log.
+- `app/Config/` - JSON config loading/caching and runtime env settings.
+- `app/Models/Contracts.cs` - API DTOs and internal records.
 - `app/wwwroot/index.html` - management table UI and timers.
+- `app/wwwroot/user-stats.html` - per-user stats page (Gantt + audit).
 - `config/kid-access-config.json` - active limits config.
 - `config/kid-access-config.example.json` - sample config.
 - SQLite path comes from `DB_PATH` (default `/data/kid-control-state.db`).
@@ -106,6 +116,7 @@ See `.env.example`.
 - `GET /health` - healthcheck.
 - `GET /api/kid-control` - raw MikroTik kid-control list.
 - `GET /api/state` - UI state payload.
+  - Includes per-user `mikrotikStatus` (for example: `active`, `blocked`, `paused`, `blocked+paused`).
 - `GET /api/users/{name}/stats` - per-user stats with Gantt + `auditEvents` for the selected period.
 - `POST /api/users/{name}/request`
   - body: `{ "windowMinutes": 120 }`
@@ -128,7 +139,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open: `http://<host>:3030`
+Open: `http://<host>:3031`
 
 ## Run in Docker Desktop (step-by-step)
 
@@ -147,8 +158,8 @@ Open: `http://<host>:3030`
    docker compose up -d --build
    ```
 6. Validate endpoints:
-   - UI: `http://localhost:3030`
-   - health: `http://localhost:3030/health`
+   - UI: `http://localhost:3031`
+   - health: `http://localhost:3031/health`
 
 Useful commands:
 
