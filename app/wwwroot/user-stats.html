@@ -495,6 +495,7 @@
           dayRows.push({
             dayKey: dayStart,
             dayLabel: baseDayLabel,
+            dayHeaderLabel: baseDayLabel,
             lane: 'all',
             windowLabel: `${startLabel} - ${endLabel}`,
             startMinute,
@@ -520,11 +521,11 @@
           });
         }
 
-        const dayLabel = `${baseDayLabel} · Итого: ${fmtDurationMs(dayTotalMs)}`;
+        const dayHeaderLabel = `${baseDayLabel}\nИтого: ${fmtDurationMs(dayTotalMs)}`;
         for (const row of dayRows) {
           rows.push({
             ...row,
-            dayLabel
+            dayHeaderLabel
           });
         }
       }
@@ -547,17 +548,18 @@
         data: { values: rows },
         facet: {
           row: {
-            field: 'dayLabel',
+            field: 'dayHeaderLabel',
             type: 'ordinal',
             sort: { field: 'dayKey', op: 'min', order: 'ascending' },
             header: {
               title: null,
-              labelFontSize: 12,
+              labelFontSize: 11,
               labelColor: '#3a4b64',
               labelFontWeight: 600,
-              labelPadding: 8,
+              labelPadding: 4,
               labelOrient: 'left',
-              labelAngle: 0
+              labelAngle: 0,
+              labelLineHeight: 13
             }
           }
         },
@@ -632,7 +634,7 @@
 
     function getChartPlotWidth() {
       const containerWidth = Math.max(320, Math.floor(chartEl.clientWidth || 0));
-      const leftColumnsWidth = window.innerWidth <= 620 ? 170 : 240;
+      const leftColumnsWidth = window.innerWidth <= 620 ? 120 : 165;
       if (window.innerWidth <= 620) {
         return Math.max(360, containerWidth - leftColumnsWidth - 24);
       }
