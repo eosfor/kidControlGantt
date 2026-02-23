@@ -19,26 +19,90 @@ sealed class KidControlService
     private readonly SessionRepository _repo;
     private readonly MikrotikClient _mikrotik;
     private readonly EmailNotificationService _email;
+    private readonly ILogger<KidControlService> _logger;
 
     public KidControlService(
         AccessConfigProvider configProvider,
         SessionRepository repo,
         MikrotikClient mikrotik,
-        EmailNotificationService email)
+        EmailNotificationService email,
+        ILogger<KidControlService> logger)
     {
         _configProvider = configProvider;
         _repo = repo;
         _mikrotik = mikrotik;
         _email = email;
+        _logger = logger;
     }
 
     public void SweepExpiredSessions()
     {
+        SweepExpiredSessionsAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public async Task SweepExpiredSessionsAsync(CancellationToken ct)
+    {
         var cfg = _configProvider.GetConfig();
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var expired = _repo.ListExpiredActiveSessions(nowMs);
+        Dictionary<string, Dictionary<string, string>>? entriesByUser = null;
+
+        if (expired.Count > 0)
+        {
+            try
+            {
+                var entries = await _mikrotik.GetKidControlListAsync(ct);
+                entriesByUser = entries
+                    .Where(e => !string.IsNullOrWhiteSpace(e.GetValueOrDefault("name")))
+                    .GroupBy(e => e.GetValueOrDefault("name") ?? string.Empty, StringComparer.Ordinal)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load MikroTik Kid Control list during expired-session sweep; will retry later");
+            }
+        }
+
         foreach (var session in expired)
         {
+            if (entriesByUser is null)
+            {
+                // Don't mark the session expired in DB until MikroTik window/pause cleanup succeeds.
+                continue;
+            }
+
+            try
+            {
+                if (entriesByUser.TryGetValue(session.UserName, out var entry))
+                {
+                    var dayKey = GetDayKeyForTimestamp(session.ExpiresAtMs, cfg.TimeZone);
+                    await _mikrotik.DisableUserAsync(entry, dayKey, ct);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "MikroTik entry for expired session user {UserName} not found during sweep; ending session in local DB only",
+                        session.UserName);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to clear MikroTik window/pause user {UserName} for expired session {SessionId}; will retry later",
+                    session.UserName,
+                    session.Id);
+                continue;
+            }
+
             var ended = _repo.EndSession(session.Id, session.ExpiresAtMs, "expired", nowMs);
             if (ended)
             {
@@ -70,14 +134,14 @@ sealed class KidControlService
 
     public async Task<StateResponse> GetStateAsync(CancellationToken ct)
     {
-        SweepExpiredSessions();
+        await SweepExpiredSessionsAsync(ct);
         var cfg = _configProvider.GetConfig();
         return await BuildStateAsync(cfg, ct);
     }
 
-    public Task<UserStatsResponse> GetUserStatsAsync(string userName, int days, CancellationToken ct)
+    public async Task<UserStatsResponse> GetUserStatsAsync(string userName, int days, CancellationToken ct)
     {
-        SweepExpiredSessions();
+        await SweepExpiredSessionsAsync(ct);
         var cfg = _configProvider.GetConfig();
         var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, userName, StringComparison.Ordinal));
 
@@ -140,12 +204,12 @@ sealed class KidControlService
             auditEvents
         );
 
-        return Task.FromResult(response);
+        return response;
     }
 
     public async Task<RequestResponse> RequestAccessAsync(string userName, int? windowMinutes, CancellationToken ct)
     {
-        SweepExpiredSessions();
+        await SweepExpiredSessionsAsync(ct);
         var cfg = _configProvider.GetConfig();
         var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, userName, StringComparison.Ordinal));
 
@@ -263,7 +327,7 @@ sealed class KidControlService
 
     public async Task<DisableResponse> DisableAccessAsync(string userName, CancellationToken ct)
     {
-        SweepExpiredSessions();
+        await SweepExpiredSessionsAsync(ct);
         var cfg = _configProvider.GetConfig();
         var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, userName, StringComparison.Ordinal));
 
@@ -794,17 +858,7 @@ sealed class KidControlService
     {
         var nowUtc = DateTimeOffset.UtcNow;
         var localNow = TimeZoneInfo.ConvertTime(nowUtc, zone);
-        var dayKey = localNow.DayOfWeek switch
-        {
-            DayOfWeek.Monday => "mon",
-            DayOfWeek.Tuesday => "tue",
-            DayOfWeek.Wednesday => "wed",
-            DayOfWeek.Thursday => "thu",
-            DayOfWeek.Friday => "fri",
-            DayOfWeek.Saturday => "sat",
-            DayOfWeek.Sunday => "sun",
-            _ => "mon"
-        };
+        var dayKey = DayKeyFromDayOfWeek(localNow.DayOfWeek);
 
         var startLocal = new DateTime(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, DateTimeKind.Unspecified);
         var nextLocal = startLocal.AddDays(1);
@@ -818,6 +872,27 @@ sealed class KidControlService
             new DateTimeOffset(startUtc, TimeSpan.Zero).ToUnixTimeMilliseconds(),
             new DateTimeOffset(nextUtc, TimeSpan.Zero).ToUnixTimeMilliseconds()
         );
+    }
+
+    private static string GetDayKeyForTimestamp(long utcMs, TimeZoneInfo zone)
+    {
+        var local = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(utcMs), zone);
+        return DayKeyFromDayOfWeek(local.DayOfWeek);
+    }
+
+    private static string DayKeyFromDayOfWeek(DayOfWeek dayOfWeek)
+    {
+        return dayOfWeek switch
+        {
+            DayOfWeek.Monday => "mon",
+            DayOfWeek.Tuesday => "tue",
+            DayOfWeek.Wednesday => "wed",
+            DayOfWeek.Thursday => "thu",
+            DayOfWeek.Friday => "fri",
+            DayOfWeek.Saturday => "sat",
+            DayOfWeek.Sunday => "sun",
+            _ => "mon"
+        };
     }
 
     private sealed record DayContext(long NowMs, string DayKey, long StartOfDayMs, long NextDayMs);

@@ -18,7 +18,7 @@ sealed class SessionSweepHostedService : BackgroundService
             try
             {
                 // Keep persisted sessions and router state in sync even when no UI/API calls happen.
-                _service.SweepExpiredSessions();
+                await _service.SweepExpiredSessionsAsync(stoppingToken);
             }
             catch (Exception ex)
             {
