@@ -495,7 +495,7 @@
           dayRows.push({
             dayKey: dayStart,
             dayLabel: baseDayLabel,
-            dayHeaderLabel: baseDayLabel,
+            dayHeaderDateLabel: baseDayLabel,
             lane: 'all',
             windowLabel: `${startLabel} - ${endLabel}`,
             startMinute,
@@ -521,11 +521,11 @@
           });
         }
 
-        const dayHeaderLabel = `${baseDayLabel}\nИтого: ${fmtDurationMs(dayTotalMs)}`;
+        const dayHeaderTotalLabel = `Итого: ${fmtDurationMs(dayTotalMs)}`;
         for (const row of dayRows) {
           rows.push({
             ...row,
-            dayHeaderLabel
+            dayHeaderTotalLabel
           });
         }
       }
@@ -548,18 +548,12 @@
         data: { values: rows },
         facet: {
           row: {
-            field: 'dayHeaderLabel',
+            field: 'dayLabel',
             type: 'ordinal',
             sort: { field: 'dayKey', op: 'min', order: 'ascending' },
             header: {
               title: null,
-              labelFontSize: 11,
-              labelColor: '#3a4b64',
-              labelFontWeight: 600,
-              labelPadding: 4,
-              labelOrient: 'left',
-              labelAngle: 0,
-              labelLineHeight: 13
+              labels: false
             }
           }
         },
@@ -618,6 +612,56 @@
                 stroke: '#ffffff',
                 strokeWidth: 0.8
               }
+            },
+            {
+              transform: [
+                {
+                  aggregate: [
+                    { op: 'max', field: 'dayHeaderDateLabel', as: 'dayHeaderDateLabel' }
+                  ],
+                  groupby: ['lane']
+                }
+              ],
+              mark: {
+                type: 'text',
+                align: 'right',
+                baseline: 'bottom',
+                dx: -8,
+                dy: -1,
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#3a4b64',
+                clip: false
+              },
+              encoding: {
+                x: { value: 0 },
+                text: { field: 'dayHeaderDateLabel', type: 'nominal' }
+              }
+            },
+            {
+              transform: [
+                {
+                  aggregate: [
+                    { op: 'max', field: 'dayHeaderTotalLabel', as: 'dayHeaderTotalLabel' }
+                  ],
+                  groupby: ['lane']
+                }
+              ],
+              mark: {
+                type: 'text',
+                align: 'right',
+                baseline: 'top',
+                dx: -8,
+                dy: 1,
+                fontSize: 10,
+                fontWeight: 500,
+                color: '#5a6a80',
+                clip: false
+              },
+              encoding: {
+                x: { value: 0 },
+                text: { field: 'dayHeaderTotalLabel', type: 'nominal' }
+              }
             }
           ]
         },
@@ -634,7 +678,7 @@
 
     function getChartPlotWidth() {
       const containerWidth = Math.max(320, Math.floor(chartEl.clientWidth || 0));
-      const leftColumnsWidth = window.innerWidth <= 620 ? 120 : 165;
+      const leftColumnsWidth = window.innerWidth <= 620 ? 96 : 132;
       if (window.innerWidth <= 620) {
         return Math.max(360, containerWidth - leftColumnsWidth - 24);
       }
