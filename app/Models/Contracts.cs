@@ -57,7 +57,14 @@ sealed record StateResponse(
 sealed record RequestWindowDto(int? WindowMinutes);
 sealed record RequestResponse(bool Ok, string User, int RequestedWindowMinutes, long GrantedUntilMs, StateResponse State);
 sealed record DisableResponse(bool Ok, string User, StateResponse State);
-sealed record UserStatsSegment(long SessionId, long StartedAtMs, long EndedAtMs, string EndReason, string EndReasonLabel);
+sealed record UserStatsSegment(
+    long SessionId,
+    long StartedAtMs,
+    long EndedAtMs,
+    string EndReason,
+    string EndReasonLabel,
+    long ActualDurationMs,
+    long WindowDurationMs);
 sealed record UserAuditEvent(
     long Id,
     long OccurredAtMs,

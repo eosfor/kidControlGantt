@@ -448,6 +448,14 @@
       });
     }
 
+    function fmtDurationMs(durationMs) {
+      const totalSeconds = Math.max(0, Math.floor((Number(durationMs) || 0) / 1000));
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
     function buildChartRows(data) {
       const segments = Array.isArray(data.segments) ? data.segments : [];
       const rangeStart = data.rangeStartMs;
@@ -490,7 +498,17 @@
             endMinute,
             endReason: segment.endReason || 'expired',
             endReasonLabel: segment.endReasonLabel || '-',
-            sessionId: Number.isFinite(segment.id) ? segment.id : 0,
+            sessionId: Number.isFinite(segment.sessionId) ? segment.sessionId : 0,
+            actualSessionDuration: fmtDurationMs(
+              Number.isFinite(segment.actualDurationMs)
+                ? segment.actualDurationMs
+                : Math.max(0, (segment.endedAtMs || 0) - (segment.startedAtMs || 0))
+            ),
+            windowTotalDuration: fmtDurationMs(
+              Number.isFinite(segment.windowDurationMs)
+                ? segment.windowDurationMs
+                : Math.max(0, (segment.endedAtMs || 0) - (segment.startedAtMs || 0))
+            ),
             tooltipRange: fmtTooltip({
               startedAtMs: start,
               endedAtMs: end,
@@ -569,6 +587,8 @@
             tooltip: [
               { field: 'dayLabel', type: 'nominal', title: 'Дата' },
               { field: 'windowLabel', type: 'nominal', title: 'Окно' },
+              { field: 'actualSessionDuration', type: 'nominal', title: 'Реальная длительность сессии' },
+              { field: 'windowTotalDuration', type: 'nominal', title: 'Суммарный размер окна' },
               { field: 'endReasonLabel', type: 'nominal', title: 'Статус' },
               { field: 'sessionId', type: 'quantitative', title: 'Сессия' },
               { field: 'tooltipRange', type: 'nominal', title: 'Подробно' }

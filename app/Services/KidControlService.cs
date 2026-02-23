@@ -185,7 +185,9 @@ sealed class KidControlService
                 clippedStartMs,
                 clippedEndMs,
                 endReason,
-                EndReasonLabel(endReason)
+                EndReasonLabel(endReason),
+                Math.Max(0, effectiveEndMs - session.StartedAtMs),
+                Math.Max(0, session.ExpiresAtMs - session.StartedAtMs)
             ));
         }
 
@@ -650,6 +652,15 @@ sealed class KidControlService
         return local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
     }
 
+    private static string FormatDurationHms(long durationMs)
+    {
+        var totalSeconds = Math.Max(0, durationMs / 1000L);
+        var hours = totalSeconds / 3600L;
+        var minutes = (totalSeconds % 3600L) / 60L;
+        var seconds = totalSeconds % 60L;
+        return $"{hours:00}:{minutes:00}:{seconds:00}";
+    }
+
     private static long ToUnixMilliseconds(TimeZoneInfo zone, DateTime localUnspecified)
     {
         var utc = TimeZoneInfo.ConvertTimeToUtc(localUnspecified, zone);
@@ -768,12 +779,39 @@ sealed class KidControlService
             eventKeys.Add(endKey);
         }
 
+        var sessionsById = sessions.ToDictionary(s => s.Id);
+
         return events
             .Select(e => e with { SessionId = ResolveSessionId(e, sessions) })
             .Where(e => e.SessionId > 0)
+            .Select(e => EnrichAuditEventWithSessionDuration(e, sessionsById))
             .OrderByDescending(e => e.OccurredAtMs)
             .ThenByDescending(e => e.Id)
             .ToList();
+    }
+
+    private static UserAuditEvent EnrichAuditEventWithSessionDuration(UserAuditEvent evt, Dictionary<long, SessionHistoryRecord> sessionsById)
+    {
+        if (!string.Equals(evt.Action, "expired", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(evt.Action, "disable", StringComparison.OrdinalIgnoreCase))
+        {
+            return evt;
+        }
+
+        if (!sessionsById.TryGetValue(evt.SessionId, out var session))
+        {
+            return evt;
+        }
+
+        var actualEndMs = session.EndedAtMs ?? session.ExpiresAtMs;
+        var durationMs = Math.Max(0, actualEndMs - session.StartedAtMs);
+        var durationLabel = $"Реальная длительность сессии: {FormatDurationHms(durationMs)}";
+
+        var detailsLabel = string.IsNullOrWhiteSpace(evt.DetailsLabel)
+            ? durationLabel
+            : $"{evt.DetailsLabel}; {durationLabel}";
+
+        return evt with { DetailsLabel = detailsLabel };
     }
 
     private static long ResolveSessionId(UserAuditEvent evt, List<SessionHistoryRecord> sessions)
