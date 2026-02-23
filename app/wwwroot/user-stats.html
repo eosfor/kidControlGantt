@@ -466,6 +466,8 @@
       for (let i = 0; i < rowsCount; i += 1) {
         const dayStart = rangeStart + (i * DAY_MS);
         const dayEnd = dayStart + DAY_MS;
+        const dayRows = [];
+        let dayTotalMs = 0;
         const dayLabel = fmtDate(dayStart, data.timezone, {
           weekday: 'short',
           day: '2-digit',
@@ -483,13 +485,14 @@
           if (widthMs <= 0) {
             continue;
           }
+          dayTotalMs += widthMs;
 
           const startMinute = Math.max(0, (start - dayStart) / 60000);
           const endMinute = Math.min(24 * 60, (end - dayStart) / 60000);
           const startLabel = fmtTime(start, data.timezone);
           const endLabel = fmtTime(end, data.timezone);
 
-          rows.push({
+          dayRows.push({
             dayKey: dayStart,
             dayLabel,
             lane: 'all',
@@ -514,6 +517,14 @@
               endedAtMs: end,
               endReasonLabel: segment.endReasonLabel || '-'
             }, data.timezone)
+          });
+        }
+
+        const dayTotalDurationLabel = `Итого: ${fmtDurationMs(dayTotalMs)}`;
+        for (const row of dayRows) {
+          rows.push({
+            ...row,
+            dayTotalDurationLabel
           });
         }
       }
@@ -574,34 +585,59 @@
                 labelExpr: "datum.value >= 1440 ? '23:59' : ((floor(datum.value/60) < 10 ? '0' : '') + floor(datum.value/60) + ':' + ((datum.value % 60) < 10 ? '0' : '') + (datum.value % 60))"
               }
             },
-            x2: { field: 'endMinute' },
-            color: {
-              field: 'endReason',
-              type: 'nominal',
-              legend: null,
-              scale: {
-                domain: ['expired', 'auto', 'manual', 'active'],
-                range: ['#1a8b4a', '#1a8b4a', '#bf3c3c', '#1f6fff']
-              }
-            },
-            tooltip: [
-              { field: 'dayLabel', type: 'nominal', title: 'Дата' },
-              { field: 'windowLabel', type: 'nominal', title: 'Окно' },
-              { field: 'actualSessionDuration', type: 'nominal', title: 'Реальная длительность сессии' },
-              { field: 'windowTotalDuration', type: 'nominal', title: 'Суммарный размер окна' },
-              { field: 'endReasonLabel', type: 'nominal', title: 'Статус' },
-              { field: 'sessionId', type: 'quantitative', title: 'Сессия' },
-              { field: 'tooltipRange', type: 'nominal', title: 'Подробно' }
-            ]
           },
           layer: [
             {
+              encoding: {
+                x2: { field: 'endMinute' },
+                color: {
+                  field: 'endReason',
+                  type: 'nominal',
+                  legend: null,
+                  scale: {
+                    domain: ['expired', 'auto', 'manual', 'active'],
+                    range: ['#1a8b4a', '#1a8b4a', '#bf3c3c', '#1f6fff']
+                  }
+                },
+                tooltip: [
+                  { field: 'dayLabel', type: 'nominal', title: 'Дата' },
+                  { field: 'windowLabel', type: 'nominal', title: 'Окно' },
+                  { field: 'actualSessionDuration', type: 'nominal', title: 'Реальная длительность сессии' },
+                  { field: 'windowTotalDuration', type: 'nominal', title: 'Суммарный размер окна' },
+                  { field: 'endReasonLabel', type: 'nominal', title: 'Статус' },
+                  { field: 'sessionId', type: 'quantitative', title: 'Сессия' },
+                  { field: 'tooltipRange', type: 'nominal', title: 'Подробно' }
+                ]
+              },
               mark: {
                 type: 'bar',
                 cornerRadius: 4,
                 height: 14,
                 stroke: '#ffffff',
                 strokeWidth: 0.8
+              }
+            },
+            {
+              transform: [
+                {
+                  aggregate: [
+                    { op: 'max', field: 'dayTotalDurationLabel', as: 'dayTotalDurationLabel' }
+                  ],
+                  groupby: ['lane']
+                }
+              ],
+              mark: {
+                type: 'text',
+                align: 'right',
+                baseline: 'middle',
+                dx: -6,
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#33435b'
+              },
+              encoding: {
+                x: { value: chartWidth },
+                text: { field: 'dayTotalDurationLabel', type: 'nominal' }
               }
             }
           ]
