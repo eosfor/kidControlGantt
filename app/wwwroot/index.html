@@ -344,7 +344,6 @@
             <th>Лимит на сегодня</th>
             <th>Остаток до лимита</th>
             <th>Таймер текущего окна</th>
-            <th>До отключения (end)</th>
             <th>Размер окна (мин)</th>
             <th>Действия</th>
           </tr>
@@ -549,7 +548,7 @@
       rowRefs.clear();
 
       if (!state || !Array.isArray(state.users) || state.users.length === 0) {
-        rowsEl.innerHTML = '<tr><td colspan="7">В конфиге нет пользователей для отображения.</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="6">В конфиге нет пользователей для отображения.</td></tr>';
         return;
       }
 
@@ -561,10 +560,6 @@
         const dynamicUsedSeconds = getDynamicUsage(row, nowMs);
         const remainingSeconds = Math.max(0, dayLimitSeconds - dynamicUsedSeconds);
         const windowRemaining = row.activeSession ? Math.max(0, Math.floor((row.activeSession.endsAtMs - nowMs) / 1000)) : 0;
-        const disableAtMs = row.activeSession
-          ? Math.min(row.activeSession.endsAtMs, state.dayWindowCutoffMs || row.activeSession.endsAtMs)
-          : 0;
-        const disableRemaining = row.activeSession ? Math.max(0, Math.floor((disableAtMs - nowMs) / 1000)) : 0;
         const userStatus = buildUserStatus(row);
 
         if (!(row.name in selectedWindows)) {
@@ -589,7 +584,6 @@
           <td data-label="Лимит на сегодня"><span data-field="day-limit">${fmtDuration(dayLimitSeconds)}</span></td>
           <td data-label="Остаток до лимита"><span data-field="remaining" class="${remainingSeconds === 0 ? 'danger' : 'ok'}">${fmtDuration(remainingSeconds)}</span></td>
           <td data-label="Таймер текущего окна"><span data-field="window-remaining" class="${windowRemaining === 0 ? 'muted' : 'warning'}">${fmtDuration(windowRemaining)}</span></td>
-          <td data-label="До отключения (end)"><span data-field="disable-remaining" class="${disableRemaining === 0 ? 'muted' : 'warning'}">${fmtDuration(disableRemaining)}</span></td>
           <td data-label="Размер окна (мин)">
             <div class="window-control">
               <input
@@ -617,7 +611,6 @@
           userStatusEl: tr.querySelector('[data-field="user-status"]'),
           remainingEl: tr.querySelector('[data-field="remaining"]'),
           windowRemainingEl: tr.querySelector('[data-field="window-remaining"]'),
-          disableRemainingEl: tr.querySelector('[data-field="disable-remaining"]'),
           windowInputEl: tr.querySelector('[data-role="window"]'),
           windowRangeEl: tr.querySelector('[data-field="window-range"]'),
           requestBtn: tr.querySelector('[data-field="request-btn"]'),
@@ -645,10 +638,6 @@
         const dynamicUsedSeconds = getDynamicUsage(row, nowMs);
         const remainingSeconds = Math.max(0, dayLimitSeconds - dynamicUsedSeconds);
         const windowRemaining = row.activeSession ? Math.max(0, Math.floor((row.activeSession.endsAtMs - nowMs) / 1000)) : 0;
-        const disableAtMs = row.activeSession
-          ? Math.min(row.activeSession.endsAtMs, state.dayWindowCutoffMs || row.activeSession.endsAtMs)
-          : 0;
-        const disableRemaining = row.activeSession ? Math.max(0, Math.floor((disableAtMs - nowMs) / 1000)) : 0;
 
         if (refs.remainingEl) {
           refs.remainingEl.textContent = fmtDuration(remainingSeconds);
@@ -658,11 +647,6 @@
         if (refs.windowRemainingEl) {
           refs.windowRemainingEl.textContent = fmtDuration(windowRemaining);
           refs.windowRemainingEl.className = windowRemaining === 0 ? 'muted' : 'warning';
-        }
-
-        if (refs.disableRemainingEl) {
-          refs.disableRemainingEl.textContent = fmtDuration(disableRemaining);
-          refs.disableRemainingEl.className = disableRemaining === 0 ? 'muted' : 'warning';
         }
 
         if (refs.requestBtn) {
