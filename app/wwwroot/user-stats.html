@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Статистика пользователя</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vega-tooltip@0.35.2/build/vega-tooltip.min.css" />
   <style>
     :root {
       --bg: #f4f6fb;
@@ -114,6 +115,7 @@
     }
 
     .axis {
+      display: none;
       margin-left: 155px;
       margin-right: 8px;
       position: relative;
@@ -133,8 +135,13 @@
     .chart {
       border: 1px solid var(--line);
       border-radius: 10px;
-      overflow: hidden;
+      overflow: auto;
       background: #fff;
+    }
+
+    .chart > .vega-host {
+      min-width: 100%;
+      padding: 6px;
     }
 
     .row {
@@ -367,6 +374,9 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
   <script>
     const DAY_MS = 24 * 60 * 60 * 1000;
     const DAYS = 7;
@@ -393,16 +403,6 @@
 
     function buildAxis() {
       axisEl.innerHTML = '';
-      const ticks = window.innerWidth <= 620
-        ? [0, 6, 12, 18, 24]
-        : [0, 4, 8, 12, 16, 20, 24];
-      for (const hour of ticks) {
-        const marker = document.createElement('div');
-        marker.className = 'axis-mark';
-        marker.style.left = `${(hour / 24) * 100}%`;
-        marker.textContent = `${String(hour).padStart(2, '0')}:00`;
-        axisEl.appendChild(marker);
-      }
     }
 
     function fmtDate(ts, timeZone, opts) {
@@ -440,35 +440,35 @@
       return `${start} - ${end} | ${segment.endReasonLabel}`;
     }
 
-    function renderChart(data) {
-      chartEl.innerHTML = '';
+    function fmtTime(ts, timeZone) {
+      return fmtDate(ts, timeZone, {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    }
 
+    function buildChartRows(data) {
       const segments = Array.isArray(data.segments) ? data.segments : [];
       const rangeStart = data.rangeStartMs;
       const rangeEnd = data.rangeEndMs;
       const rowsCount = Math.max(1, Math.round((rangeEnd - rangeStart) / DAY_MS));
+      const rows = [];
 
       for (let i = 0; i < rowsCount; i += 1) {
         const dayStart = rangeStart + (i * DAY_MS);
         const dayEnd = dayStart + DAY_MS;
-
-        const row = document.createElement('div');
-        row.className = 'row';
-
-        const label = document.createElement('div');
-        label.className = 'day-label';
-        label.textContent = fmtDate(dayStart, data.timezone, {
+        const dayLabel = fmtDate(dayStart, data.timezone, {
           weekday: 'short',
           day: '2-digit',
           month: '2-digit'
         });
 
-        const timeline = document.createElement('div');
-        timeline.className = 'timeline';
-
         const daySegments = segments.filter((segment) => segment.endedAtMs > dayStart && segment.startedAtMs < dayEnd);
+        daySegments.sort((a, b) => (a.startedAtMs - b.startedAtMs) || (a.endedAtMs - b.endedAtMs) || (a.id - b.id));
 
-        for (const segment of daySegments) {
+        for (let taskIndex = 0; taskIndex < daySegments.length; taskIndex += 1) {
+          const segment = daySegments[taskIndex];
           const start = Math.max(segment.startedAtMs, dayStart);
           const end = Math.min(segment.endedAtMs, dayEnd);
           const widthMs = Math.max(0, end - start);
@@ -476,25 +476,160 @@
             continue;
           }
 
-          const bar = document.createElement('div');
-          bar.className = `segment ${segment.endReason}`;
-          bar.style.left = `${((start - dayStart) / DAY_MS) * 100}%`;
-          bar.style.width = `${(widthMs / DAY_MS) * 100}%`;
-          bar.title = fmtTooltip(segment, data.timezone);
-          timeline.appendChild(bar);
-        }
+          const startMinute = Math.max(0, (start - dayStart) / 60000);
+          const endMinute = Math.min(24 * 60, (end - dayStart) / 60000);
+          const startLabel = fmtTime(start, data.timezone);
+          const endLabel = fmtTime(end, data.timezone);
 
-        row.appendChild(label);
-        row.appendChild(timeline);
-        chartEl.appendChild(row);
+          rows.push({
+            dayKey: dayStart,
+            dayLabel,
+            lane: 'all',
+            windowLabel: `${startLabel} - ${endLabel}`,
+            startMinute,
+            endMinute,
+            endReason: segment.endReason || 'expired',
+            endReasonLabel: segment.endReasonLabel || '-',
+            sessionId: Number.isFinite(segment.id) ? segment.id : 0,
+            tooltipRange: fmtTooltip({
+              startedAtMs: start,
+              endedAtMs: end,
+              endReasonLabel: segment.endReasonLabel || '-'
+            }, data.timezone)
+          });
+        }
       }
 
-      if (segments.length === 0) {
+      return rows;
+    }
+
+    function minuteTickValues() {
+      return window.innerWidth <= 620
+        ? [0, 360, 720, 1080, 1440]
+        : [0, 240, 480, 720, 960, 1200, 1440];
+    }
+
+    function buildVegaSpec(rows, chartWidth) {
+      return {
+        $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+        background: null,
+        autosize: { type: 'pad', contains: 'padding' },
+        spacing: 8,
+        data: { values: rows },
+        facet: {
+          row: {
+            field: 'dayLabel',
+            type: 'ordinal',
+            sort: { field: 'dayKey', op: 'min', order: 'ascending' },
+            header: {
+              title: null,
+              labelFontSize: 12,
+              labelColor: '#3a4b64',
+              labelFontWeight: 600,
+              labelPadding: 8,
+              labelOrient: 'left',
+              labelAngle: 0
+            }
+          }
+        },
+        spec: {
+          width: chartWidth,
+          height: 34,
+          encoding: {
+            y: {
+              field: 'lane',
+              type: 'ordinal',
+              axis: null
+            },
+            x: {
+              field: 'startMinute',
+              type: 'quantitative',
+              scale: { domain: [0, 1440], nice: false },
+              axis: {
+                title: null,
+                values: minuteTickValues(),
+                grid: true,
+                tickColor: '#d7e0ee',
+                gridColor: '#e8eef7',
+                labelColor: '#5a6a80',
+                labelFontSize: 11,
+                labelExpr: "datum.value >= 1440 ? '23:59' : ((floor(datum.value/60) < 10 ? '0' : '') + floor(datum.value/60) + ':' + ((datum.value % 60) < 10 ? '0' : '') + (datum.value % 60))"
+              }
+            },
+            x2: { field: 'endMinute' },
+            color: {
+              field: 'endReason',
+              type: 'nominal',
+              legend: null,
+              scale: {
+                domain: ['expired', 'auto', 'manual', 'active'],
+                range: ['#1a8b4a', '#1a8b4a', '#bf3c3c', '#1f6fff']
+              }
+            },
+            tooltip: [
+              { field: 'dayLabel', type: 'nominal', title: 'Дата' },
+              { field: 'windowLabel', type: 'nominal', title: 'Окно' },
+              { field: 'endReasonLabel', type: 'nominal', title: 'Статус' },
+              { field: 'sessionId', type: 'quantitative', title: 'Сессия' },
+              { field: 'tooltipRange', type: 'nominal', title: 'Подробно' }
+            ]
+          },
+          layer: [
+            {
+              mark: {
+                type: 'bar',
+                cornerRadius: 4,
+                height: 14,
+                stroke: '#ffffff',
+                strokeWidth: 0.8
+              }
+            }
+          ]
+        },
+        resolve: {
+          scale: { y: 'independent' }
+        },
+        config: {
+          view: { stroke: '#dde4ef', fill: '#fafdff' },
+          axis: { domainColor: '#dde4ef' },
+          facet: { spacing: 6 }
+        }
+      };
+    }
+
+    function getChartPlotWidth() {
+      const containerWidth = Math.max(320, Math.floor(chartEl.clientWidth || 0));
+      const leftColumnsWidth = window.innerWidth <= 620 ? 90 : 110;
+      if (window.innerWidth <= 620) {
+        return Math.max(360, containerWidth - leftColumnsWidth - 24);
+      }
+      return Math.max(520, containerWidth - leftColumnsWidth - 28);
+    }
+
+    async function renderChart(data) {
+      chartEl.innerHTML = '';
+      const rows = buildChartRows(data);
+
+      if (rows.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
         empty.textContent = 'За выбранный период сессий не найдено.';
         chartEl.appendChild(empty);
+        return;
       }
+
+      if (typeof vegaEmbed !== 'function') {
+        throw new Error('Не удалось загрузить Vega-Lite (vega-embed).');
+      }
+
+      const host = document.createElement('div');
+      host.className = 'vega-host';
+      chartEl.appendChild(host);
+
+      await vegaEmbed(host, buildVegaSpec(rows, getChartPlotWidth()), {
+        actions: false,
+        renderer: 'svg'
+      });
     }
 
     function renderMeta(data) {
@@ -585,7 +720,7 @@
         stats = payload;
         titleEl.textContent = `Статистика: ${payload.displayName}`;
         renderMeta(payload);
-        renderChart(payload);
+        await renderChart(payload);
         renderAudit(payload);
 
         if (showMessage) {
@@ -599,7 +734,14 @@
     }
 
     reloadBtn.addEventListener('click', () => loadStats(true));
-    window.addEventListener('resize', buildAxis);
+    window.addEventListener('resize', () => {
+      buildAxis();
+      if (stats) {
+        renderChart(stats).catch((error) => {
+          setStatus(`Ошибка отрисовки графика: ${error.message}`, true);
+        });
+      }
+    });
 
     buildAxis();
     loadStats(true);
