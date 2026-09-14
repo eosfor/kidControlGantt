@@ -88,3 +88,12 @@ sealed record UserStatsResponse(
     List<UserStatsSegment> Segments,
     List<UserAuditEvent> AuditEvents
 );
+
+sealed record CurrentGradeRow(
+    string ClassId,
+    double? AveragePercentage,
+    string? Mark,
+    int Missing,
+    string? LastUpdated);
+
+sealed record CurrentGradesResponse(string? AsOf, List<CurrentGradeRow> CurrentGrades);

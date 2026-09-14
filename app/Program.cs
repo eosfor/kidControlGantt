@@ -5,6 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 var runtime = RuntimeSettings.Load(builder.Configuration);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddSingleton<AccessConfigProvider>();
+builder.Services.AddSingleton<CurrentGradesProvider>();
 builder.Services.AddSingleton<SessionRepository>();
 builder.Services.AddSingleton<EmailNotificationService>();
 builder.Services.AddHttpClient<MikrotikClient>((sp, client) =>
@@ -46,6 +47,18 @@ app.MapGet("/api/state", async (KidControlService service, CancellationToken ct)
     {
         var result = await service.GetStateAsync(ct);
         return Results.Ok(result);
+    }
+    catch (AppHttpException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode);
+    }
+});
+
+app.MapGet("/api/current-grades", async (CurrentGradesProvider provider, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await provider.GetCurrentGradesAsync(ct));
     }
     catch (AppHttpException ex)
     {
