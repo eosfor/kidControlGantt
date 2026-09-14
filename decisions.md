@@ -78,6 +78,32 @@ Reasons:
 Telemetry:
 The `/api/current-grades` smoke request returned HTTP 200 with the expected `userName`, `asOf`, and seven dashboard rows. Inline UI JavaScript syntax validation passed.
 
+## 2026-09-13 21:12:55 PDT - Render the grades table as cards on narrow screens
+
+Decision:
+Keep one semantic grades table and change only its CSS presentation at viewport widths up to 640 pixels. Each table row becomes a card with the class on the left, the mark and percentage on the right, and missing assignments plus the last update below it. Preserve the existing low-grade highlight and table presentation on wider screens.
+
+Reasons:
+- Reusing the same table rows avoids duplicate DOM, rendering logic, and accessibility content for desktop and mobile views.
+- A 640-pixel breakpoint targets phone-sized screens without changing the existing tablet and desktop table behavior.
+- The API contract does not expose teacher data, so the cards use exactly the fields already shown in the table.
+
+Telemetry:
+Chromium mobile emulation at 390 pixels reported a 390-pixel document width with no horizontal overflow; a grade card occupied 348 pixels and its right-side mark remained inside the viewport. At 1280 pixels, Chromium reported the grades elements as `table`, `table-row`, and `table-header-group`.
+
+## 2026-09-13 21:23:15 PDT - Isolate responsive rules by table
+
+Decision:
+Scope the existing 760-pixel mobile rules to the access-control table and wrapper. Keep the grades-specific card layout limited to 640 pixels, and preserve its visually hidden table header instead of removing it from the accessibility tree.
+
+Reasons:
+- The earlier grades-card change did not account for the later, unscoped 760-pixel media rules, so those rules still changed the grades table between 641 and 760 pixels.
+- The unscoped `thead { display: none; }` also overrode the accessible hiding technique used for the grades header at phone widths.
+- Explicit table classes prevent future responsive changes for one table from leaking into the other.
+
+Telemetry:
+Chromium reported the grades row as `grid` at 390 pixels and `table-row` at both 700 and 1280 pixels. The grades header was not `display: none` at any tested width, while the access-table header remained hidden at 390 and 700 pixels. Document width matched viewport width at all three sizes.
+
 ## 2026-09-13 21:30:00 PDT - Prevent grade policy from increasing access and expose UI inputs
 
 Decision:

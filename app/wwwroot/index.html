@@ -242,6 +242,165 @@
       }
     }
 
+    @media (max-width: 640px) {
+      .grades-as-of {
+        margin-bottom: 12px;
+      }
+
+      .grades-wrap {
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+      }
+
+      .grades-table {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        background: transparent;
+      }
+
+      .grades-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .grades-table tbody {
+        display: grid;
+        width: 100%;
+        gap: 12px;
+      }
+
+      .grades-table tbody tr {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "class mark"
+          "missing percentage"
+          "updated updated";
+        gap: 4px 12px;
+        width: 100%;
+        padding: 12px;
+        margin-bottom: 0;
+        border: 1px solid #bfcbe0;
+        border-radius: 8px;
+        background: var(--card);
+        box-shadow: 0 2px 3px rgba(17, 31, 60, 0.12);
+      }
+
+      .grades-table tbody td {
+        width: auto;
+        border: 0;
+        padding: 0;
+        min-width: 0;
+      }
+
+      .grades-table tbody td::before {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 400;
+      }
+
+      .grades-table tbody td:nth-child(1) {
+        grid-area: class;
+        color: var(--primary-hover);
+        font-size: 17px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .grades-table tbody td:nth-child(1)::before {
+        display: none;
+      }
+
+      .grades-table tbody td:nth-child(2) {
+        grid-area: percentage;
+        align-self: end;
+        color: var(--muted);
+        text-align: right;
+      }
+
+      .grades-table tbody td:nth-child(2)::before {
+        content: "(";
+        display: inline;
+        margin: 0;
+      }
+
+      .grades-table tbody td:nth-child(2)::after {
+        content: ")";
+      }
+
+      .grades-table tbody td:nth-child(3) {
+        grid-area: mark;
+        color: var(--primary-hover);
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1;
+        text-align: right;
+      }
+
+      .grades-table tbody td:nth-child(3)::before {
+        content: "Оценка";
+        display: block;
+        margin-bottom: 2px;
+      }
+
+      .grades-table tbody td:nth-child(4) {
+        grid-area: missing;
+        align-self: end;
+        color: var(--muted);
+      }
+
+      .grades-table tbody td:nth-child(4)::before {
+        content: "Пропущено ";
+        display: inline;
+        margin: 0;
+      }
+
+      .grades-table tbody td:nth-child(5) {
+        grid-area: updated;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .grades-table tbody td:nth-child(5)::before {
+        content: "Обновлено: ";
+        display: inline;
+        margin: 0;
+      }
+
+      .grades-table tr.grade-low td {
+        background: transparent;
+      }
+
+      .grades-table tr.grade-low {
+        background: #fff0f0;
+        border-color: #e6bcbc;
+      }
+
+      .grades-table tr.grade-low td:nth-child(1),
+      .grades-table tr.grade-low td:nth-child(3) {
+        color: var(--danger);
+      }
+
+      .grades-table tr.grade-empty {
+        display: block;
+      }
+
+      .grades-table tr.grade-empty td {
+        color: var(--muted);
+      }
+    }
+
     @media (max-width: 1400px) {
       .container {
         max-width: none;
@@ -279,29 +438,29 @@
     }
 
     @media (max-width: 760px) {
-      .table-wrap {
+      .access-table-wrap {
         overflow-x: visible;
         border: none;
       }
 
-      table,
-      thead,
-      tbody,
-      tr,
-      td {
+      .access-table,
+      .access-table thead,
+      .access-table tbody,
+      .access-table tr,
+      .access-table td {
         display: block;
         width: 100%;
       }
 
-      thead {
+      .access-table thead {
         display: none;
       }
 
-      table {
+      .access-table {
         min-width: 0;
       }
 
-      tr {
+      .access-table tr {
         border: 1px solid var(--line);
         border-radius: 10px;
         margin-bottom: 10px;
@@ -309,20 +468,20 @@
         background: #fff;
       }
 
-      tr:last-child {
+      .access-table tr:last-child {
         margin-bottom: 0;
       }
 
-      td {
+      .access-table td {
         border-bottom: 1px dashed #d9e1ee;
         padding: 10px 0;
       }
 
-      td:last-child {
+      .access-table td:last-child {
         border-bottom: none;
       }
 
-      td::before {
+      .access-table td::before {
         content: attr(data-label);
         display: block;
         margin-bottom: 6px;
@@ -362,7 +521,7 @@
       <h2 id="gradesHeading">Текущие оценки</h2>
       <div class="muted grades-as-of" id="gradesAsOf"></div>
       <div class="status" id="gradesStatus"></div>
-      <div class="table-wrap">
+      <div class="table-wrap grades-wrap">
         <table class="grades-table">
           <thead>
             <tr>
@@ -380,8 +539,8 @@
 
     <h2>Запрос времени</h2>
 
-    <div class="table-wrap">
-      <table>
+    <div class="table-wrap access-table-wrap">
+      <table class="access-table">
         <thead>
           <tr>
             <th>Пользователь</th>
@@ -452,6 +611,7 @@
       const grades = Array.isArray(payload.currentGrades) ? payload.currentGrades : [];
       if (grades.length === 0) {
         const row = document.createElement('tr');
+        row.classList.add('grade-empty');
         const cell = document.createElement('td');
         cell.colSpan = 5;
         cell.textContent = 'Нет текущих оценок для отображения.';
