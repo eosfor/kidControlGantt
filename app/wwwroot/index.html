@@ -46,6 +46,11 @@
       font-size: 1.4rem;
     }
 
+    h2 {
+      margin: 20px 0 8px;
+      font-size: 1.15rem;
+    }
+
     .meta {
       margin-bottom: 12px;
       color: var(--muted);
@@ -138,6 +143,19 @@
       border-bottom: none;
     }
 
+    .grades-table {
+      min-width: 650px;
+    }
+
+    .grades-table tr.grade-low td {
+      background: #fff0f0;
+      color: #7f1d1d;
+    }
+
+    .grades-as-of {
+      margin-bottom: 8px;
+    }
+
     .user {
       font-weight: 700;
     }
@@ -213,6 +231,10 @@
 
       h1 {
         font-size: 1.15rem;
+      }
+
+      h2 {
+        font-size: 1.05rem;
       }
 
       .toolbar button {
@@ -336,6 +358,28 @@
 
     <div class="status" id="status"></div>
 
+    <section aria-labelledby="gradesHeading">
+      <h2 id="gradesHeading">Текущие оценки</h2>
+      <div class="muted grades-as-of" id="gradesAsOf"></div>
+      <div class="status" id="gradesStatus"></div>
+      <div class="table-wrap">
+        <table class="grades-table">
+          <thead>
+            <tr>
+              <th>Класс</th>
+              <th>Средний процент</th>
+              <th>Оценка</th>
+              <th>Пропущено</th>
+              <th>Последнее обновление</th>
+            </tr>
+          </thead>
+          <tbody id="gradeRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <h2>Запрос времени</h2>
+
     <div class="table-wrap">
       <table>
         <thead>
@@ -364,6 +408,9 @@
     const rowRefs = new Map();
 
     const rowsEl = document.getElementById('rows');
+    const gradeRowsEl = document.getElementById('gradeRows');
+    const gradesAsOfEl = document.getElementById('gradesAsOf');
+    const gradesStatusEl = document.getElementById('gradesStatus');
     const statusEl = document.getElementById('status');
     const metaEl = document.getElementById('meta');
     const reloadBtn = document.getElementById('reloadBtn');
@@ -371,6 +418,71 @@
     function setStatus(message, isError = false) {
       statusEl.textContent = message || '';
       statusEl.classList.toggle('error', Boolean(isError));
+    }
+
+    function setGradesStatus(message, isError = false) {
+      gradesStatusEl.textContent = message || '';
+      gradesStatusEl.classList.toggle('error', Boolean(isError));
+    }
+
+    function appendGradeCell(rowElement, label, value) {
+      const cell = document.createElement('td');
+      cell.dataset.label = label;
+      cell.textContent = value;
+      rowElement.appendChild(cell);
+    }
+
+    function formatPercentage(value) {
+      return Number.isFinite(value)
+        ? new Intl.NumberFormat('ru-RU', { style: 'percent', maximumFractionDigits: 1 }).format(value)
+        : '—';
+    }
+
+    function renderGrades(payload) {
+      gradeRowsEl.replaceChildren();
+      gradesAsOfEl.textContent = payload.asOf ? `Данные на: ${payload.asOf}` : '';
+
+      const grades = Array.isArray(payload.currentGrades) ? payload.currentGrades : [];
+      if (grades.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.textContent = 'Нет текущих оценок для отображения.';
+        row.appendChild(cell);
+        gradeRowsEl.appendChild(row);
+        return;
+      }
+
+      for (const grade of grades) {
+        const row = document.createElement('tr');
+        if (Number.isFinite(grade.averagePercentage) && grade.averagePercentage < 0.85) {
+          row.classList.add('grade-low');
+        }
+
+        appendGradeCell(row, 'Класс', grade.classId || '—');
+        appendGradeCell(row, 'Средний процент', formatPercentage(grade.averagePercentage));
+        appendGradeCell(row, 'Оценка', grade.mark || '—');
+        appendGradeCell(row, 'Пропущено', Number.isInteger(grade.missing) ? String(grade.missing) : '—');
+        appendGradeCell(row, 'Последнее обновление', grade.lastUpdated || '—');
+        gradeRowsEl.appendChild(row);
+      }
+    }
+
+    async function fetchGrades() {
+      try {
+        const response = await fetch('/api/current-grades', { method: 'GET', cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        renderGrades(payload);
+        setGradesStatus('');
+      } catch (error) {
+        gradeRowsEl.replaceChildren();
+        gradesAsOfEl.textContent = '';
+        setGradesStatus(`Ошибка загрузки оценок: ${error.message}`, true);
+      }
     }
 
     function fmtDuration(totalSeconds) {
@@ -788,7 +900,11 @@
       }
     });
 
-    reloadBtn.addEventListener('click', () => fetchState(true, true));
+    reloadBtn.addEventListener('click', async () => {
+      reloadBtn.disabled = true;
+      await Promise.all([fetchState(true), fetchGrades()]);
+      reloadBtn.disabled = false;
+    });
 
     setInterval(() => {
       updateLiveRows();
@@ -798,7 +914,12 @@
       fetchState(false);
     }, 5000);
 
+    setInterval(() => {
+      fetchGrades();
+    }, 60000);
+
     fetchState(true);
+    fetchGrades();
   </script>
 </body>
 </html>

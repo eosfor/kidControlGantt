@@ -47,6 +47,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - `app/wwwroot/user-stats.html` - per-user stats page (Gantt + audit).
 - `config/kid-access-config.json` - active limits config.
 - `config/kid-access-config.example.json` - sample config.
+- `config/currentGrades.json` - current grade snapshot displayed on the main page.
 - SQLite path comes from `DB_PATH` (default `/data/kid-control-state.db`).
 - Main tables:
   - `sessions` - active/history sessions and usage.
@@ -106,6 +107,7 @@ See `.env.example`.
 - `BASIC_AUTH` - optional auth header override.
 - `DB_PATH` - SQLite DB path.
 - `LIMITS_CONFIG_PATH` - limits config path.
+- `CURRENT_GRADES_PATH` - current grades JSON path (default `/app/config/currentGrades.json`).
 - `APP_TIMEZONE` - optional timezone override (e.g. `America/Los_Angeles`), takes precedence over JSON `timezone`.
 - `CONFIG_CACHE_TTL_MS` - config cache TTL.
 - `SWEEP_INTERVAL_SECONDS` - expired session cleanup interval.
@@ -117,6 +119,7 @@ See `.env.example`.
 - `GET /api/kid-control` - raw MikroTik kid-control list.
 - `GET /api/state` - UI state payload.
   - Includes per-user `mikrotikStatus` (for example: `active`, `blocked`, `paused`, `blocked+paused`).
+- `GET /api/current-grades` - current grade snapshot for the main page.
 - `GET /api/users/{name}/stats` - per-user stats with Gantt + `auditEvents` for the selected period.
 - `POST /api/users/{name}/request`
   - body: `{ "windowMinutes": 120 }`

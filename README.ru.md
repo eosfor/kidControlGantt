@@ -47,6 +47,7 @@
 - `app/wwwroot/user-stats.html` — страница статистики пользователя (Gantt + audit).
 - `config/kid-access-config.json` — рабочий конфиг лимитов.
 - `config/kid-access-config.example.json` — пример конфига.
+- `config/currentGrades.json` — текущий снимок оценок для главной страницы.
 - SQLite файл — путь из `DB_PATH` (по умолчанию `/data/kid-control-state.db`).
 - Основные таблицы:
   - `sessions` — активные/завершенные сессии и расчет использования.
@@ -106,6 +107,7 @@
 - `BASIC_AUTH` — опциональный override заголовка авторизации.
 - `DB_PATH` — путь к SQLite.
 - `LIMITS_CONFIG_PATH` — путь к JSON-конфигу лимитов.
+- `CURRENT_GRADES_PATH` — путь к JSON с текущими оценками (по умолчанию `/app/config/currentGrades.json`).
 - `APP_TIMEZONE` — опциональный override таймзоны (например `America/Los_Angeles`), имеет приоритет над `timezone` в JSON.
 - `CONFIG_CACHE_TTL_MS` — кеш конфига.
 - `SWEEP_INTERVAL_SECONDS` — частота cleanup просроченных сессий.
@@ -117,6 +119,7 @@
 - `GET /api/kid-control` — сырой список MikroTik kid-control.
 - `GET /api/state` — состояние для UI.
   - Для каждого пользователя возвращается `mikrotikStatus` (например: `active`, `blocked`, `paused`, `blocked+paused`).
+- `GET /api/current-grades` — текущий снимок оценок для главной страницы.
 - `GET /api/users/{name}/stats` — статистика пользователя: Gantt + `auditEvents` за период.
 - `POST /api/users/{name}/request` — запрос/продление окна.
   - body: `{ "windowMinutes": 120 }`
