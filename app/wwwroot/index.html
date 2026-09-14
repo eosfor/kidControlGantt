@@ -399,6 +399,7 @@
 
   <script>
     let state = null;
+    let gradesPayload = null;
     let syncTimestampMs = 0;
     let clientSyncAtMs = 0;
     let isStateFetchInFlight = false;
@@ -441,6 +442,12 @@
     function renderGrades(payload) {
       gradeRowsEl.replaceChildren();
       gradesAsOfEl.textContent = payload.asOf ? `Данные на: ${payload.asOf}` : '';
+      const policyUser = Array.isArray(state?.users)
+        ? state.users.find((row) => String(row.name || '').trim().toLowerCase() === String(payload.userName || '').trim().toLowerCase())
+        : null;
+      const threshold = typeof policyUser?.gradeRestrictionThreshold === 'number'
+        ? policyUser.gradeRestrictionThreshold
+        : Number.NaN;
 
       const grades = Array.isArray(payload.currentGrades) ? payload.currentGrades : [];
       if (grades.length === 0) {
@@ -455,7 +462,9 @@
 
       for (const grade of grades) {
         const row = document.createElement('tr');
-        if (Number.isFinite(grade.averagePercentage) && grade.averagePercentage < 0.85) {
+        if (Number.isFinite(threshold)
+          && Number.isFinite(grade.averagePercentage)
+          && grade.averagePercentage < threshold) {
           row.classList.add('grade-low');
         }
 
@@ -476,9 +485,11 @@
           throw new Error(payload.error || `HTTP ${response.status}`);
         }
 
-        renderGrades(payload);
+        gradesPayload = payload;
+        renderGrades(gradesPayload);
         setGradesStatus('');
       } catch (error) {
+        gradesPayload = null;
         gradeRowsEl.replaceChildren();
         gradesAsOfEl.textContent = '';
         setGradesStatus(`Ошибка загрузки оценок: ${error.message}`, true);
@@ -552,10 +563,15 @@
       const dayLimitSeconds = row.dayLimitMinutes * 60;
       const extraUsedSeconds = Math.max(0, dynamicUsedSeconds - row.usedSeconds);
       const dynamicRemainingCapSeconds = Math.max(0, row.remainingCapSeconds - extraUsedSeconds);
+      const gradeStatus = String(row.gradeRestrictionStatus || 'NotConfigured');
+      const activeExceedsRestrictedLimit = (gradeStatus === 'Restricted' || gradeStatus === 'RestrictedStale')
+        && row.activeSession
+        && row.activeSession.totalSeconds > Number(row.hardCapMinutes || 0) * 60;
       const inRequestWindow = (!state.dayWindowStartMs || nowMs >= state.dayWindowStartMs)
         && (!state.dayWindowEndMs || nowMs <= state.dayWindowEndMs);
 
       return row.existsInMikrotik
+        && !activeExceedsRestrictedLimit
         && dynamicUsedSeconds < dayLimitSeconds
         && dynamicRemainingCapSeconds > 0
         && inRequestWindow;
@@ -563,6 +579,56 @@
 
     function getRequestButtonLabel(row) {
       return row.activeSession ? 'Изменить текущую сессию' : 'Запросить доступ';
+    }
+
+    function formatPolicyTtl(minutes) {
+      const value = Number(minutes);
+      if (!Number.isFinite(value) || value <= 0) {
+        return 'настроенного срока';
+      }
+      if (value % 1440 === 0) {
+        return `${value / 1440} дн.`;
+      }
+      if (value % 60 === 0) {
+        return `${value / 60} ч.`;
+      }
+      return `${value} мин.`;
+    }
+
+    function getGradePolicyPresentation(row) {
+      const status = String(row.gradeRestrictionStatus || 'NotConfigured');
+      if (status === 'SourceUnavailable') {
+        const sourceMessage = row.gradeRestrictionErrorCode === 'stale_normal'
+          ? `Отчёт старше ${formatPolicyTtl(row.gradeRestrictionNormalTtlMinutes)}.`
+          : 'Файл оценок отсутствует или некорректен.';
+        return {
+          message: `Новые запросы временно недоступны: ${sourceMessage}`,
+          className: 'danger'
+        };
+      }
+
+      if (status !== 'Restricted' && status !== 'RestrictedStale') {
+        return { message: '', className: 'muted' };
+      }
+
+      const lowGrades = Array.isArray(row.gradeRestrictionLowClasses)
+        ? row.gradeRestrictionLowClasses
+            .map((grade) => `${grade.classId}: ${formatPercentage(grade.averagePercentage)}`)
+            .join(', ')
+        : '';
+      const staleNote = status === 'RestrictedStale'
+        ? ` Отчёт старше ${formatPolicyTtl(row.gradeRestrictionNormalTtlMinutes)}.`
+        : '';
+      const activeExceedsLimit = row.activeSession
+        && row.activeSession.totalSeconds > Number(row.hardCapMinutes || 0) * 60;
+      const sessionNote = activeExceedsLimit
+        ? ' Текущая сессия не изменена; лимит применяется к следующим запросам.'
+        : '';
+
+      return {
+        message: `Лимит новых запросов снижен до ${row.dayLimitMinutes} мин.${lowGrades ? ` ${lowGrades}.` : ''}${staleNote}${sessionNote}`,
+        className: 'warning'
+      };
     }
 
     function shouldRebuildRows(nextState) {
@@ -614,6 +680,7 @@
         selectedWindows[row.name] = selectedWindow;
 
         const userStatus = buildUserStatus(row);
+        const gradePolicy = getGradePolicyPresentation(row);
 
         if (refs.dayLimitEl) {
           refs.dayLimitEl.textContent = fmtDuration(dayLimitSeconds);
@@ -622,6 +689,11 @@
         if (refs.userStatusEl) {
           refs.userStatusEl.textContent = userStatus.label;
           refs.userStatusEl.className = userStatus.className;
+        }
+
+        if (refs.gradePolicyEl) {
+          refs.gradePolicyEl.textContent = gradePolicy.message;
+          refs.gradePolicyEl.className = gradePolicy.className;
         }
 
         if (refs.windowInputEl) {
@@ -653,6 +725,10 @@
         updateStaticRows();
         updateLiveRows();
       }
+
+      if (gradesPayload) {
+        renderGrades(gradesPayload);
+      }
     }
 
     function renderRows() {
@@ -673,6 +749,7 @@
         const remainingSeconds = Math.max(0, dayLimitSeconds - dynamicUsedSeconds);
         const windowRemaining = row.activeSession ? Math.max(0, Math.floor((row.activeSession.endsAtMs - nowMs) / 1000)) : 0;
         const userStatus = buildUserStatus(row);
+        const gradePolicy = getGradePolicyPresentation(row);
 
         if (!(row.name in selectedWindows)) {
           selectedWindows[row.name] = row.suggestedWindowMinutes;
@@ -692,6 +769,7 @@
           <td data-label="Пользователь">
             <div class="user"><a class="user-link" href="/user-stats.html?user=${encodeURIComponent(row.name)}">${row.displayName}</a></div>
             <div class="muted">${row.name} | <span data-field="user-status" class="${userStatus.className}">${userStatus.label}</span></div>
+            <div data-field="grade-policy"></div>
           </td>
           <td data-label="Лимит на сегодня"><span data-field="day-limit">${fmtDuration(dayLimitSeconds)}</span></td>
           <td data-label="Остаток до лимита"><span data-field="remaining" class="${remainingSeconds === 0 ? 'danger' : 'ok'}">${fmtDuration(remainingSeconds)}</span></td>
@@ -721,6 +799,7 @@
         rowRefs.set(row.name, {
           dayLimitEl: tr.querySelector('[data-field="day-limit"]'),
           userStatusEl: tr.querySelector('[data-field="user-status"]'),
+          gradePolicyEl: tr.querySelector('[data-field="grade-policy"]'),
           remainingEl: tr.querySelector('[data-field="remaining"]'),
           windowRemainingEl: tr.querySelector('[data-field="window-remaining"]'),
           windowInputEl: tr.querySelector('[data-role="window"]'),
@@ -728,6 +807,12 @@
           requestBtn: tr.querySelector('[data-field="request-btn"]'),
           disableBtn: tr.querySelector('[data-field="disable-btn"]')
         });
+
+        const gradePolicyEl = tr.querySelector('[data-field="grade-policy"]');
+        if (gradePolicyEl) {
+          gradePolicyEl.textContent = gradePolicy.message;
+          gradePolicyEl.className = gradePolicy.className;
+        }
 
         rowsEl.appendChild(tr);
       }

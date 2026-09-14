@@ -78,6 +78,109 @@ public sealed class AccessConfigProviderTests
         Assert.Contains("dayWindows.mon.end", ex.Message);
     }
 
+    [Fact]
+    public void GetConfig_ParsesSingleEnabledGradePolicy()
+    {
+        using var tmp = new TempDir();
+        var configPath = Path.Combine(tmp.Path, "kid-access-config.json");
+        File.WriteAllText(configPath, """
+        {
+          "users": [
+            {
+              "name": "Vlad",
+              "limitsMinutes": { "mon": 600 },
+              "gradeLimitPolicy": {
+                "enabled": true,
+                "threshold": 0.85,
+                "restrictedLimitMinutes": 300,
+                "normalDecisionTtlMinutes": 20160
+              }
+            },
+            {
+              "name": "test",
+              "limitsMinutes": { "mon": 120 }
+            }
+          ]
+        }
+        """);
+
+        var provider = new AccessConfigProvider(TestRuntimeFactory.Create(
+            Path.Combine(tmp.Path, "state.db"),
+            configPath));
+
+        var policy = provider.GetConfig().Users[0].GradeLimitPolicy;
+
+        Assert.NotNull(policy);
+        Assert.True(policy.Enabled);
+        Assert.Equal(0.85, policy.Threshold);
+        Assert.Equal(300, policy.RestrictedLimitMinutes);
+        Assert.Equal(20160, policy.NormalDecisionTtlMinutes);
+    }
+
+    [Fact]
+    public void GetConfig_ThrowsWhenMoreThanOneGradePolicyIsEnabled()
+    {
+        using var tmp = new TempDir();
+        var configPath = Path.Combine(tmp.Path, "kid-access-config.json");
+        File.WriteAllText(configPath, """
+        {
+          "users": [
+            {
+              "name": "kid-1",
+              "limitsMinutes": { "mon": 600 },
+              "gradeLimitPolicy": {
+                "enabled": true,
+                "threshold": 0.85,
+                "restrictedLimitMinutes": 300,
+                "normalDecisionTtlMinutes": 20160
+              }
+            },
+            {
+              "name": "kid-2",
+              "limitsMinutes": { "mon": 600 },
+              "gradeLimitPolicy": {
+                "enabled": true,
+                "threshold": 0.85,
+                "restrictedLimitMinutes": 300,
+                "normalDecisionTtlMinutes": 20160
+              }
+            }
+          ]
+        }
+        """);
+
+        var provider = new AccessConfigProvider(TestRuntimeFactory.Create(
+            Path.Combine(tmp.Path, "state.db"),
+            configPath));
+
+        var ex = Assert.Throws<AppHttpException>(() => provider.GetConfig());
+
+        Assert.Contains("только для одного пользователя", ex.Message);
+    }
+
+    [Fact]
+    public void GetConfig_ThrowsWhenUserNamesDifferOnlyByCase()
+    {
+        using var tmp = new TempDir();
+        var configPath = Path.Combine(tmp.Path, "kid-access-config.json");
+        File.WriteAllText(configPath, """
+        {
+          "users": [
+            { "name": "Vlad", "limitsMinutes": { "mon": 600 } },
+            { "name": " vLaD ", "limitsMinutes": { "mon": 600 } }
+          ]
+        }
+        """);
+
+        var provider = new AccessConfigProvider(TestRuntimeFactory.Create(
+            Path.Combine(tmp.Path, "state.db"),
+            configPath));
+
+        var ex = Assert.Throws<AppHttpException>(() => provider.GetConfig());
+
+        Assert.Contains("уникальны", ex.Message);
+    }
+
     private sealed class TempDir : IDisposable
     {
         public TempDir()

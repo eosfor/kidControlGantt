@@ -31,6 +31,9 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - UI window size is clamped to `0..dayLimit`.
 - Access requests are blocked before `start` and after `end`, even with remaining limit.
 - At `end + 10 minutes` access is forcibly cut off (hard cutoff).
+- One user can optionally have `gradeLimitPolicy` enabled. A grade below the configured threshold changes only new requests/extensions; an existing session is never changed automatically.
+- Under a grade restriction, the effective limit and hard cap both equal `min(dayLimit, restrictedLimitMinutes)`, so the rule never increases access and global grace is not added.
+- A stale report with a low grade keeps the restriction. A stale normal report or invalid grade source blocks new requests but does not stop an active session.
 
 ## Architecture
 
@@ -80,13 +83,19 @@ File: `config/kid-access-config.json`
       "parentEmail": ["parent1@example.com", "parent2@example.com"],
       "defaultWindowMinutes": 120,
       "limitsMinutes": {
-        "mon": 120,
-        "tue": 120,
-        "wed": 120,
-        "thu": 120,
-        "fri": 120,
-        "sat": 120,
-        "sun": 120
+        "mon": 600,
+        "tue": 600,
+        "wed": 600,
+        "thu": 600,
+        "fri": 600,
+        "sat": 600,
+        "sun": 600
+      },
+      "gradeLimitPolicy": {
+        "enabled": true,
+        "threshold": 0.85,
+        "restrictedLimitMinutes": 300,
+        "normalDecisionTtlMinutes": 20160
       }
     }
   ]
@@ -96,6 +105,9 @@ File: `config/kid-access-config.json`
 If a user exists in MikroTik but is missing in `users`, it is hidden from UI.
 `parentEmail` supports both formats: string (`"parent@example.com"`) and array of strings.
 If `email` or `parentEmail` is missing/empty, corresponding email notifications are skipped.
+The current implementation allows at most one user with `gradeLimitPolicy.enabled: true` because `currentGrades.json` contains one user snapshot. `normalDecisionTtlMinutes: 20160` is 14 days. The UI receives the configured threshold and TTL from `/api/state`; neither value is hardcoded in the display logic.
+
+The grades snapshot must contain `userName`, a parseable `asOf`, and `currentGrades`. `asOf` accepts ISO 8601 or `MM/dd/yyyy hh:mm tt` in the application timezone. `averagePercentage` is a fraction from `0` through `1`; `null` grades are ignored by the policy.
 
 ## Environment variables
 
@@ -119,7 +131,7 @@ See `.env.example`.
 - `GET /api/kid-control` - raw MikroTik kid-control list.
 - `GET /api/state` - UI state payload.
   - Includes per-user `mikrotikStatus` (for example: `active`, `blocked`, `paused`, `blocked+paused`).
-- `GET /api/current-grades` - current grade snapshot for the main page.
+- `GET /api/current-grades` - current grade snapshot, including `userName`, for the main page.
 - `GET /api/users/{name}/stats` - per-user stats with Gantt + `auditEvents` for the selected period.
 - `POST /api/users/{name}/request`
   - body: `{ "windowMinutes": 120 }`

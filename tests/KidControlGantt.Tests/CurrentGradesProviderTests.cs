@@ -8,6 +8,7 @@ public sealed class CurrentGradesProviderTests
         var gradesPath = Path.Combine(tmp.Path, "currentGrades.json");
         File.WriteAllText(gradesPath, """
         {
+          "userName": "Vlad",
           "asOf": "09/13/2026 05:15 PM",
           "currentGrades": [
             {
@@ -30,10 +31,11 @@ public sealed class CurrentGradesProviderTests
         """);
 
         var settings = TestRuntimeFactory.Create(Path.Combine(tmp.Path, "state.db"), limitsPath, gradesPath);
-        var provider = new CurrentGradesProvider(settings);
+        var provider = new CurrentGradesProvider(new CurrentGradesFileReader(settings));
 
         var result = await provider.GetCurrentGradesAsync(CancellationToken.None);
 
+        Assert.Equal("Vlad", result.UserName);
         Assert.Equal("09/13/2026 05:15 PM", result.AsOf);
         Assert.Equal(2, result.CurrentGrades.Count);
         Assert.Null(result.CurrentGrades[0].AveragePercentage);
@@ -51,6 +53,8 @@ public sealed class CurrentGradesProviderTests
         var gradesPath = Path.Combine(tmp.Path, "currentGrades.json");
         File.WriteAllText(gradesPath, """
         {
+          "userName": "Vlad",
+          "asOf": "09/13/2026 05:15 PM",
           "currentGrades": [
             {
               "classId": "AP Statistics A",
@@ -64,7 +68,7 @@ public sealed class CurrentGradesProviderTests
         """);
 
         var settings = TestRuntimeFactory.Create(Path.Combine(tmp.Path, "state.db"), limitsPath, gradesPath);
-        var provider = new CurrentGradesProvider(settings);
+        var provider = new CurrentGradesProvider(new CurrentGradesFileReader(settings));
 
         var exception = await Assert.ThrowsAsync<AppHttpException>(
             () => provider.GetCurrentGradesAsync(CancellationToken.None));

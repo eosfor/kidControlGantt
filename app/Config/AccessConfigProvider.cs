@@ -71,12 +71,19 @@ sealed class AccessConfigProvider
         }
 
         var users = new List<UserLimitConfig>();
+        var normalizedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var enabledGradePolicyCount = 0;
         foreach (var userEl in usersEl.EnumerateArray())
         {
             var name = userEl.TryGetProperty("name", out var nameEl) ? (nameEl.GetString() ?? string.Empty).Trim() : string.Empty;
             if (string.IsNullOrWhiteSpace(name))
             {
                 throw new AppHttpException(500, "У каждого пользователя в конфиге должен быть name");
+            }
+
+            if (!normalizedNames.Add(name))
+            {
+                throw new AppHttpException(500, $"Имена пользователей должны быть уникальны без учета регистра и внешних пробелов: {name}");
             }
 
             var displayName = userEl.TryGetProperty("displayName", out var displayEl)
@@ -103,10 +110,108 @@ sealed class AccessConfigProvider
                 }
             }
 
-            users.Add(new UserLimitConfig(name, displayName, email, parentEmails, userDefaultWindow, limits));
+            var gradeLimitPolicy = ParseGradeLimitPolicy(userEl, name);
+            if (gradeLimitPolicy?.Enabled == true)
+            {
+                enabledGradePolicyCount++;
+            }
+
+            users.Add(new UserLimitConfig(name, displayName, email, parentEmails, userDefaultWindow, limits, gradeLimitPolicy));
+        }
+
+        if (enabledGradePolicyCount > 1)
+        {
+            throw new AppHttpException(500, "В текущей версии gradeLimitPolicy может быть включен только для одного пользователя");
         }
 
         return new AccessConfig(timezone, defaultWindow, graceMinutes, endingSoonMinutes, dayWindows, users);
+    }
+
+    private static GradeLimitPolicyConfig? ParseGradeLimitPolicy(JsonElement userEl, string userName)
+    {
+        if (!userEl.TryGetProperty("gradeLimitPolicy", out var policyEl))
+        {
+            return null;
+        }
+
+        if (policyEl.ValueKind != JsonValueKind.Object)
+        {
+            throw new AppHttpException(500, $"gradeLimitPolicy для {userName} должен быть JSON-объектом");
+        }
+
+        var enabled = ReadOptionalBoolean(policyEl, "enabled", false, $"gradeLimitPolicy для {userName}");
+        if (!enabled)
+        {
+            return new GradeLimitPolicyConfig(false, 0.85, 0, 20_160);
+        }
+
+        var threshold = ReadRequiredDouble(policyEl, "threshold", $"gradeLimitPolicy для {userName}");
+        if (!double.IsFinite(threshold) || threshold < 0 || threshold > 1)
+        {
+            throw new AppHttpException(500, $"gradeLimitPolicy.threshold для {userName} должен быть в диапазоне от 0 до 1");
+        }
+
+        var restrictedLimitMinutes = ReadRequiredNonNegativeInt(
+            policyEl,
+            "restrictedLimitMinutes",
+            $"gradeLimitPolicy для {userName}");
+        var normalDecisionTtlMinutes = ReadRequiredPositiveInt(
+            policyEl,
+            "normalDecisionTtlMinutes",
+            $"gradeLimitPolicy для {userName}");
+
+        return new GradeLimitPolicyConfig(true, threshold, restrictedLimitMinutes, normalDecisionTtlMinutes);
+    }
+
+    private static bool ReadOptionalBoolean(JsonElement obj, string property, bool fallback, string context)
+    {
+        if (!obj.TryGetProperty(property, out var el))
+        {
+            return fallback;
+        }
+
+        if (el.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return el.GetBoolean();
+        }
+
+        throw new AppHttpException(500, $"{context}.{property} должен быть true или false");
+    }
+
+    private static double ReadRequiredDouble(JsonElement obj, string property, string context)
+    {
+        if (!obj.TryGetProperty(property, out var el)
+            || el.ValueKind != JsonValueKind.Number
+            || !el.TryGetDouble(out var value))
+        {
+            throw new AppHttpException(500, $"{context}.{property} должен быть числом");
+        }
+
+        return value;
+    }
+
+    private static int ReadRequiredNonNegativeInt(JsonElement obj, string property, string context)
+    {
+        if (!obj.TryGetProperty(property, out var el)
+            || el.ValueKind != JsonValueKind.Number
+            || !el.TryGetInt32(out var value)
+            || value < 0)
+        {
+            throw new AppHttpException(500, $"{context}.{property} должен быть целым неотрицательным числом");
+        }
+
+        return value;
+    }
+
+    private static int ReadRequiredPositiveInt(JsonElement obj, string property, string context)
+    {
+        var value = ReadRequiredNonNegativeInt(obj, property, context);
+        if (value == 0)
+        {
+            throw new AppHttpException(500, $"{context}.{property} должен быть больше 0");
+        }
+
+        return value;
     }
 
     private static Dictionary<string, DayWindowConfig> ParseDayWindows(JsonElement root)

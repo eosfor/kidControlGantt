@@ -16,6 +16,7 @@ sealed class KidControlService
     };
 
     private readonly AccessConfigProvider _configProvider;
+    private readonly GradeLimitPolicyEvaluator _gradeLimitPolicyEvaluator;
     private readonly SessionRepository _repo;
     private readonly MikrotikClient _mikrotik;
     private readonly EmailNotificationService _email;
@@ -23,12 +24,14 @@ sealed class KidControlService
 
     public KidControlService(
         AccessConfigProvider configProvider,
+        GradeLimitPolicyEvaluator gradeLimitPolicyEvaluator,
         SessionRepository repo,
         MikrotikClient mikrotik,
         EmailNotificationService email,
         ILogger<KidControlService> logger)
     {
         _configProvider = configProvider;
+        _gradeLimitPolicyEvaluator = gradeLimitPolicyEvaluator;
         _repo = repo;
         _mikrotik = mikrotik;
         _email = email;
@@ -232,7 +235,19 @@ sealed class KidControlService
             throw new AppHttpException(409, $"Запрос доступа после {FormatLocalTime(dayWindow.EndMs, cfg.TimeZone)} недоступен");
         }
 
-        var dayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var baseDayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var gradeDecision = await _gradeLimitPolicyEvaluator.EvaluateAsync(
+            userCfg,
+            baseDayLimitMinutes,
+            cfg.GraceMinutes,
+            cfg.TimeZone,
+            ct);
+        if (string.Equals(gradeDecision.Status, "SourceUnavailable", StringComparison.Ordinal))
+        {
+            throw new AppHttpException(409, "Нельзя выдать доступ: текущие оценки недоступны или устарели");
+        }
+
+        var dayLimitMinutes = gradeDecision.EffectiveLimitMinutes;
         var requestedWindowMinutes = Math.Clamp(windowMinutes ?? userCfg.DefaultWindowMinutes, 0, dayLimitMinutes);
 
         if (requestedWindowMinutes <= 0)
@@ -248,7 +263,7 @@ sealed class KidControlService
             throw new AppHttpException(409, $"Дневной лимит ({dayLimitMinutes} мин) исчерпан");
         }
 
-        var maxPerDaySeconds = dayLimitSeconds + (cfg.GraceMinutes * 60);
+        var maxPerDaySeconds = gradeDecision.HardCapMinutes * 60;
         var remainingCapSeconds = Math.Max(0, maxPerDaySeconds - usage.UsedSeconds);
         var secondsUntilWindowCutoff = Math.Max(0, (int)((dayWindow.CutoffMs - day.NowMs) / 1000));
         // Cap grant by both daily allowance and the configured day-end cutoff.
@@ -259,6 +274,17 @@ sealed class KidControlService
             throw new AppHttpException(409, "Невозможно выдать доступ: достигнут верхний лимит или завершился день");
         }
 
+        var active = usage.ActiveSession;
+        var restrictionActive = gradeDecision.Status is "Restricted" or "RestrictedStale";
+        if (restrictionActive
+            && active is not null
+            && active.ExpiresAtMs - active.StartedAtMs > gradeDecision.HardCapMinutes * 60_000L)
+        {
+            throw new AppHttpException(
+                409,
+                $"Текущая сессия уже превышает новый лимит {gradeDecision.HardCapMinutes} мин и остается без изменений; продление недоступно");
+        }
+
         var entries = await _mikrotik.GetKidControlListAsync(ct);
         var entry = entries.FirstOrDefault(e => string.Equals(e.GetValueOrDefault("name"), userCfg.Name, StringComparison.Ordinal));
         if (entry is null)
@@ -267,7 +293,6 @@ sealed class KidControlService
         }
 
         var requestedWindowSeconds = requestedWindowMinutes * 60;
-        var active = usage.ActiveSession;
         var startMs = active is null ? day.NowMs : active.StartedAtMs;
         var requestedEndMs = active is null
             ? day.NowMs + (requestedWindowSeconds * 1000L)
@@ -397,7 +422,7 @@ sealed class KidControlService
         foreach (var userCfg in cfg.Users)
         {
             map.TryGetValue(userCfg.Name, out var entry);
-            users.Add(BuildStateRow(cfg, userCfg, entry, day));
+            users.Add(await BuildStateRowAsync(cfg, userCfg, entry, day, ct));
         }
 
         return new StateResponse(
@@ -417,12 +442,24 @@ sealed class KidControlService
         );
     }
 
-    private UserStateRow BuildStateRow(AccessConfig cfg, UserLimitConfig userCfg, Dictionary<string, string>? mikrotikEntry, DayContext day)
+    private async Task<UserStateRow> BuildStateRowAsync(
+        AccessConfig cfg,
+        UserLimitConfig userCfg,
+        Dictionary<string, string>? mikrotikEntry,
+        DayContext day,
+        CancellationToken ct)
     {
         var dayWindow = GetDayWindowBounds(cfg, day);
-        var dayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var baseDayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var gradeDecision = await _gradeLimitPolicyEvaluator.EvaluateAsync(
+            userCfg,
+            baseDayLimitMinutes,
+            cfg.GraceMinutes,
+            cfg.TimeZone,
+            ct);
+        var dayLimitMinutes = gradeDecision.EffectiveLimitMinutes;
         var dayLimitSeconds = dayLimitMinutes * 60;
-        var maxPerDaySeconds = dayLimitSeconds + (cfg.GraceMinutes * 60);
+        var maxPerDaySeconds = gradeDecision.HardCapMinutes * 60;
 
         var usage = GetUsageState(userCfg.Name, day.StartOfDayMs, day.NextDayMs, day.NowMs);
 
@@ -448,6 +485,11 @@ sealed class KidControlService
             );
         }
 
+        var restrictionActive = gradeDecision.Status is "Restricted" or "RestrictedStale";
+        var activeExceedsRestrictedLimit = restrictionActive
+            && usage.ActiveSession is not null
+            && usage.ActiveSession.ExpiresAtMs - usage.ActiveSession.StartedAtMs > gradeDecision.HardCapMinutes * 60_000L;
+
         return new UserStateRow(
             userCfg.Name,
             userCfg.DisplayName,
@@ -459,12 +501,24 @@ sealed class KidControlService
             mikrotikStatus.Active,
             mikrotikStatus.Status,
             dayLimitMinutes,
+            baseDayLimitMinutes,
+            gradeDecision.HardCapMinutes,
             usage.UsedSeconds,
             remainingSeconds,
             remainingCapSeconds,
             maxGrantSecondsNow,
-            existsInMikrotik && usage.UsedSeconds < dayLimitSeconds && maxGrantSecondsNow > 0 && inRequestWindow,
+            existsInMikrotik
+                && !activeExceedsRestrictedLimit
+                && usage.UsedSeconds < dayLimitSeconds
+                && maxGrantSecondsNow > 0
+                && inRequestWindow,
             Math.Clamp(userCfg.DefaultWindowMinutes, 0, dayLimitMinutes),
+            gradeDecision.Status,
+            gradeDecision.Threshold,
+            gradeDecision.NormalDecisionTtlMinutes,
+            gradeDecision.SourceAsOfUtc?.ToString("O", CultureInfo.InvariantCulture),
+            gradeDecision.LowGrades,
+            gradeDecision.ErrorCode,
             activeSession
         );
     }

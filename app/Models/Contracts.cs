@@ -12,7 +12,13 @@ sealed record UserLimitConfig(
     string? Email,
     List<string> ParentEmails,
     int DefaultWindowMinutes,
-    Dictionary<string, int> LimitsMinutes);
+    Dictionary<string, int> LimitsMinutes,
+    GradeLimitPolicyConfig? GradeLimitPolicy);
+sealed record GradeLimitPolicyConfig(
+    bool Enabled,
+    double Threshold,
+    int RestrictedLimitMinutes,
+    int NormalDecisionTtlMinutes);
 sealed record SessionRecord(long Id, string UserName, long StartedAtMs, long ExpiresAtMs);
 sealed record SoonEndingSessionRecord(long Id, string UserName, long ExpiresAtMs);
 sealed record SessionHistoryRecord(long Id, long StartedAtMs, long ExpiresAtMs, long? EndedAtMs, string? EndedReason);
@@ -29,12 +35,20 @@ sealed record UserStateRow(
     bool MikrotikActive,
     string MikrotikStatus,
     int DayLimitMinutes,
+    int BaseDayLimitMinutes,
+    int HardCapMinutes,
     int UsedSeconds,
     int RemainingSeconds,
     int RemainingCapSeconds,
     int MaxGrantSecondsNow,
     bool CanRequest,
     int SuggestedWindowMinutes,
+    string GradeRestrictionStatus,
+    double? GradeRestrictionThreshold,
+    int? GradeRestrictionNormalTtlMinutes,
+    string? GradeRestrictionSourceAsOf,
+    List<LowGradeRow> GradeRestrictionLowClasses,
+    string? GradeRestrictionErrorCode,
     ActiveSessionRow? ActiveSession
 );
 
@@ -96,4 +110,21 @@ sealed record CurrentGradeRow(
     int Missing,
     string? LastUpdated);
 
-sealed record CurrentGradesResponse(string? AsOf, List<CurrentGradeRow> CurrentGrades);
+sealed record CurrentGradesSnapshot(string UserName, string AsOf, List<CurrentGradeRow> CurrentGrades);
+sealed record CurrentGradesReadResult(CurrentGradesSnapshot? Snapshot, string? ErrorCode, string? ErrorMessage)
+{
+    public bool Success => Snapshot is not null;
+}
+sealed record CurrentGradesResponse(string UserName, string AsOf, List<CurrentGradeRow> CurrentGrades);
+sealed record LowGradeRow(string ClassId, double AveragePercentage);
+sealed record GradeLimitDecision(
+    string UserName,
+    int BaseLimitMinutes,
+    int EffectiveLimitMinutes,
+    int HardCapMinutes,
+    double? Threshold,
+    int? NormalDecisionTtlMinutes,
+    DateTimeOffset? SourceAsOfUtc,
+    List<LowGradeRow> LowGrades,
+    string Status,
+    string? ErrorCode);

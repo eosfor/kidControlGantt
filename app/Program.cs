@@ -5,7 +5,9 @@ var builder = WebApplication.CreateBuilder(args);
 var runtime = RuntimeSettings.Load(builder.Configuration);
 builder.Services.AddSingleton(runtime);
 builder.Services.AddSingleton<AccessConfigProvider>();
+builder.Services.AddSingleton<CurrentGradesFileReader>();
 builder.Services.AddSingleton<CurrentGradesProvider>();
+builder.Services.AddSingleton<GradeLimitPolicyEvaluator>();
 builder.Services.AddSingleton<SessionRepository>();
 builder.Services.AddSingleton<EmailNotificationService>();
 builder.Services.AddHttpClient<MikrotikClient>((sp, client) =>
