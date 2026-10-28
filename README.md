@@ -6,6 +6,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 
 - Reads users from `MikroTik /rest/ip/kid-control`.
 - Shows only users listed in limits config.
+- Shows server/SQLite timestamp time and router time above the table, refreshed every five seconds. Both values use the application time zone and are highlighted when they differ by more than five seconds. Router errors leave its time unavailable while server time remains visible. This display does not configure NTP or change access rules.
 - Per user UI shows:
   - current day limit,
   - remaining time to limit,
@@ -29,7 +30,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - Existing SQLite files are upgraded automatically by adding the pending table. A lost/recreated DB revokes router windows without corresponding sessions. Restoring an older DB makes that snapshot authoritative.
 - Requests, disables and reconciliation for the same user run sequentially. Run only one app instance against a router/state database. Stop the app before restoring/replacing its database.
 - Router failures are logged per managed user; failed HTTP operations return an error. The app cannot enforce a correction while the router API is unreachable, so existing router state can persist until connectivity returns.
-- Grade changes do not revoke or shorten an existing authorized session. Clock/NTP diagnostics are a separate task ([issue #2](https://github.com/eosfor/kidControlGantt/issues/2)).
+- Grade changes do not revoke or shorten an existing authorized session. The clock panel is informational; it does not configure NTP or change access decisions ([issue #2](https://github.com/eosfor/kidControlGantt/issues/2)).
 
 ## Limit rules
 
@@ -143,6 +144,7 @@ See `.env.example`.
 - `GET /api/kid-control` - raw MikroTik kid-control list.
 - `GET /api/state` - UI state payload.
   - Includes per-user `mikrotikStatus` (for example: `active`, `blocked`, `paused`, `blocked+paused`).
+- `GET /api/clock` - server/router time samples (`serverTimeMs`, nullable `routerTimeMs`, display `timezone`, nullable `routerError`). Router read failures return a partial response with server time.
 - `GET /api/current-grades` - current grade snapshot, including `userName`, for the main page.
 - `GET /api/users/{name}/stats` - per-user stats with Gantt + `auditEvents` for the selected period.
 - `POST /api/users/{name}/request`

@@ -108,6 +108,37 @@
       font-weight: 600;
     }
 
+    .clock-panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      margin: 10px 0 16px;
+      font-size: 14px;
+    }
+
+    .clock-value {
+      display: inline-block;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .clock-skew .clock-value {
+      background: #fff0f0;
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    .clock-status {
+      flex-basis: 100%;
+      color: var(--muted);
+    }
+
+    .clock-skew .clock-status,
+    .clock-unavailable .clock-status {
+      color: var(--danger);
+    }
+
     .table-wrap {
       overflow-x: auto;
       border: 1px solid var(--line);
@@ -510,6 +541,12 @@
     <h1>Управление доступом MikroTik Kid Control</h1>
     <div class="meta" id="meta"></div>
 
+    <div class="clock-panel" id="clockPanel">
+      <span title="Время сервера, которое приложение записывает в SQLite">Время сервера/БД: <time class="clock-value" id="serverClock">—</time></span>
+      <span>Время роутера: <time class="clock-value" id="routerClock">—</time></span>
+      <span class="clock-status" id="clockStatus" role="status">Загрузка времени…</span>
+    </div>
+
     <div class="toolbar">
       <button id="reloadBtn" type="button">Обновить</button>
       <span class="muted">Для активной сессии кнопка меняется на "Изменить текущую сессию".</span>
@@ -564,6 +601,10 @@
     let isStateFetchInFlight = false;
     let stateFetchSeq = 0;
     let latestAppliedStateFetchSeq = 0;
+    let clockPayload = null;
+    let clockSyncAtMs = 0;
+    let isClockFetchInFlight = false;
+    const clockDifferenceToleranceMs = 5000;
     const selectedWindows = {};
     const rowRefs = new Map();
 
@@ -574,6 +615,61 @@
     const statusEl = document.getElementById('status');
     const metaEl = document.getElementById('meta');
     const reloadBtn = document.getElementById('reloadBtn');
+    const clockPanelEl = document.getElementById('clockPanel');
+    const serverClockEl = document.getElementById('serverClock');
+    const routerClockEl = document.getElementById('routerClock');
+    const clockStatusEl = document.getElementById('clockStatus');
+
+    function renderClocks() {
+      if (!clockPayload) {
+        return;
+      }
+      const elapsedMs = performance.now() - clockSyncAtMs;
+      const format = (ms) => new Date(ms + elapsedMs).toLocaleString('ru-RU', {
+        timeZone: clockPayload.timezone, hour12: false
+      });
+      serverClockEl.textContent = format(clockPayload.serverTimeMs);
+      const available = Number.isFinite(clockPayload.routerTimeMs);
+      routerClockEl.textContent = available ? format(clockPayload.routerTimeMs) : '—';
+      const differenceMs = available ? Math.abs(clockPayload.serverTimeMs - clockPayload.routerTimeMs) : 0;
+      const differs = available && differenceMs > clockDifferenceToleranceMs;
+      clockPanelEl.classList.toggle('clock-skew', differs);
+      clockPanelEl.classList.toggle('clock-unavailable', !available);
+      const message = available
+        ? differs ? `Расхождение часов: примерно ${Math.round(differenceMs / 1000)} с.` : 'Часы согласованы (допуск 5 с).'
+        : clockPayload.routerError || 'Не удалось получить время роутера';
+      if (clockStatusEl.textContent !== message) {
+        clockStatusEl.textContent = message;
+      }
+    }
+
+    async function fetchClock() {
+      if (isClockFetchInFlight) {
+        return;
+      }
+      isClockFetchInFlight = true;
+      try {
+        const response = await fetch('/api/clock', { cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+        clockPayload = payload;
+        clockSyncAtMs = performance.now();
+        renderClocks();
+      } catch (error) {
+        if (clockPayload) {
+          clockPayload.routerTimeMs = null;
+          clockPayload.routerError = `Не удалось обновить время: ${error.message}`;
+          renderClocks();
+        } else {
+          clockPanelEl.classList.add('clock-unavailable');
+          clockStatusEl.textContent = `Не удалось обновить время: ${error.message}`;
+        }
+      } finally {
+        isClockFetchInFlight = false;
+      }
+    }
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message || '';
@@ -1147,16 +1243,18 @@
 
     reloadBtn.addEventListener('click', async () => {
       reloadBtn.disabled = true;
-      await Promise.all([fetchState(true), fetchGrades()]);
+      await Promise.all([fetchState(true), fetchGrades(), fetchClock()]);
       reloadBtn.disabled = false;
     });
 
     setInterval(() => {
       updateLiveRows();
+      renderClocks();
     }, 1000);
 
     setInterval(() => {
       fetchState(false);
+      fetchClock();
     }, 5000);
 
     setInterval(() => {
@@ -1165,6 +1263,7 @@
 
     fetchState(true);
     fetchGrades();
+    fetchClock();
   </script>
 </body>
 </html>

@@ -162,3 +162,20 @@ Telemetry:
 - `dotnet build kidControlGantt.sln --no-restore -c Release`: succeeded, 0 warnings, 0 errors.
 - `dotnet format kidControlGantt.sln --no-restore --verify-no-changes` and `git diff --check`: passed.
 - Router integration was tested with a stateful HTTP handler and real temporary SQLite files; no live router/configuration was contacted or modified.
+
+## 2026-10-27 22:15:47 PDT - Show two clocks directly instead of adding a clock monitor
+
+Decision:
+Implement the owner's reduced issue #2 scope as a small clock panel and read-only `/api/clock` endpoint. Show the server time used for SQLite timestamps and the router time in the application's display zone. Fetch both samples every five seconds while the page is open, advance their displays using browser monotonic elapsed time, and highlight both values when the absolute difference exceeds five seconds. Do not add a background monitor, database tables, NTP configuration, clock adjustment or access-policy changes.
+
+Reasons:
+- The owner explicitly requested just the current database/server and router times with a highlight when they differ, replacing the earlier broader monitoring proposal.
+- SQLite has no independent clock in this application: session timestamps come from the server's TimeProvider.
+- Read `/rest/system/clock` on the same configured router, retaining any reverse-proxy URL prefix. Parse local router date/time with the supplied `gmt-offset`, which already includes DST; display both absolute instants in the same zone. Source: https://manual.mikrotik.com/docs/system-information-and-utilities/clock/
+- Compare the router sample with the midpoint of the server request; a five-second display tolerance avoids warning on ordinary request latency and one-second clock precision. The tolerance is a UI constant, not a new access rule.
+- Keep clock polling separate from `/api/state`, so clock permission/API errors cannot interrupt access control or hide the server clock. Show an unavailable router value explicitly and log the underlying failure.
+
+Telemetry:
+The 21 new C# cases cover absolute time conversion, legacy/ISO dates, DST offset handling, date boundaries, invalid responses, reverse-proxy URLs, midpoint comparison, router failures, timeout and caller cancellation. Local browser/API checks with a loopback-only fake router verified aligned clocks, a 90-second difference, unavailable router time and recovery. A JavaScript VM check verified both drift directions, the exact five-second boundary and ticking values. No real router was contacted.
+
+Validation: all 90 tests passed; Release build completed with 0 warnings and 0 errors; format verification and git diff checks passed. Tests target net9.0 and ran on installed .NET 10.0.11 with DOTNET_ROLL_FORWARD=Major.

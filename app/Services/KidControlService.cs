@@ -147,6 +147,26 @@ sealed class KidControlService
         return await _mikrotik.GetKidControlListAsync(ct);
     }
 
+    public async Task<ClockResponse> GetClockAsync(CancellationToken ct)
+    {
+        var zone = _configProvider.GetConfig().TimeZone.Id;
+        var startMs = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+        try
+        {
+            var routerMs = await _mikrotik.GetClockAsync(ct);
+            var endMs = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+            // Compare the router sample to the middle of the request, not its arrival time.
+            return new ClockResponse(startMs + (endMs - startMs) / 2, routerMs, zone, null);
+        }
+        catch (Exception ex) when ((ex is AppHttpException or HttpRequestException or OperationCanceledException)
+            && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Failed to read MikroTik clock");
+            return new ClockResponse(_clock.GetUtcNow().ToUnixTimeMilliseconds(), null, zone,
+                "Не удалось получить время роутера");
+        }
+    }
+
     public async Task<StateResponse> GetStateAsync(CancellationToken ct)
     {
         await SweepExpiredSessionsAsync(ct);

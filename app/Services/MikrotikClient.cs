@@ -20,6 +20,60 @@ sealed class MikrotikClient
     public string ApiUrl { get; }
     public string AuthorizationHeader { get; }
 
+    public async Task<long> GetClockAsync(CancellationToken ct)
+    {
+        // Keep any reverse-proxy prefix before /rest when selecting the sibling menu.
+        var url = new Uri(new Uri(ApiUrl.TrimEnd('/') + "/"), "../../system/clock");
+        using var response = await _http.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new AppHttpException(502, $"MikroTik clock request returned HTTP {(int)response.StatusCode}");
+        }
+        var body = await response.Content.ReadAsStringAsync(ct);
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var clock = document.RootElement;
+            if (clock.ValueKind == JsonValueKind.Array && clock.GetArrayLength() == 1)
+            {
+                clock = clock[0];
+            }
+            var dateText = ReadClockField(clock, "date");
+            var timeText = ReadClockField(clock, "time");
+            var offsetText = ReadClockField(clock, "gmt-offset");
+            var unsignedOffset = offsetText.StartsWith('+') || offsetText.StartsWith('-') ? offsetText[1..] : offsetText;
+            if (!DateOnly.TryParseExact(dateText, ["yyyy-MM-dd", "MMM/dd/yyyy", "MMM/d/yyyy"],
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+                || !TimeOnly.TryParseExact(timeText, ["HH:mm:ss", "H:mm:ss"],
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var time)
+                || !TimeSpan.TryParseExact(unsignedOffset, @"hh\:mm", CultureInfo.InvariantCulture, out var offset)
+                || offset > TimeSpan.FromHours(14))
+            {
+                throw new AppHttpException(502, "MikroTik clock contains an invalid date, time or UTC offset");
+            }
+            if (offsetText.StartsWith('-'))
+            {
+                offset = -offset;
+            }
+            // gmt-offset already includes DST; do not apply the browser or server zone.
+            return new DateTimeOffset(date.ToDateTime(time), offset).ToUnixTimeMilliseconds();
+        }
+        catch (JsonException)
+        {
+            throw new AppHttpException(502, "MikroTik clock returned invalid JSON");
+        }
+    }
+
+    private static string ReadClockField(JsonElement clock, string name)
+    {
+        if (clock.ValueKind == JsonValueKind.Object && clock.TryGetProperty(name, out var field)
+            && field.ValueKind == JsonValueKind.String && field.GetString() is string value && !string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+        throw new AppHttpException(502, $"MikroTik clock is missing {name}");
+    }
+
     public bool MatchesSession(Dictionary<string, string> entry, SessionRecord? session, TimeZoneInfo zone)
     {
         return MatchesSchedule(entry, BuildSchedule(session, zone))

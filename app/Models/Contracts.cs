@@ -69,6 +69,7 @@ sealed record StateResponse(
 );
 
 sealed record RequestWindowDto(int? WindowMinutes);
+sealed record ClockResponse(long ServerTimeMs, long? RouterTimeMs, string Timezone, string? RouterError);
 sealed record RequestResponse(bool Ok, string User, int RequestedWindowMinutes, long GrantedUntilMs, StateResponse State);
 sealed record DisableResponse(bool Ok, string User, StateResponse State);
 sealed record UserStatsSegment(

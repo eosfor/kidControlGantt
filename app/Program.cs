@@ -68,6 +68,18 @@ app.MapGet("/api/current-grades", async (CurrentGradesProvider provider, Cancell
     }
 });
 
+app.MapGet("/api/clock", async (KidControlService service, CancellationToken ct) =>
+{
+    try
+    {
+        return Results.Ok(await service.GetClockAsync(ct));
+    }
+    catch (AppHttpException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode);
+    }
+});
+
 app.MapGet("/api/users/{name}/stats", async (string name, int? days, KidControlService service, CancellationToken ct) =>
 {
     try

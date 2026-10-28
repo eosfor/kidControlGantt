@@ -1,10 +1,11 @@
 internal static class TestRuntimeFactory
 {
-    public static RuntimeSettings Create(string dbPath, string limitsConfigPath, string? currentGradesPath = null)
+    public static RuntimeSettings Create(string dbPath, string limitsConfigPath, string? currentGradesPath = null,
+        string? mikrotikKidControlUrl = null)
     {
         return new RuntimeSettings
         {
-            MikrotikKidControlUrl = "http://mikrotik.local/rest/ip/kid-control",
+            MikrotikKidControlUrl = mikrotikKidControlUrl ?? "http://mikrotik.local/rest/ip/kid-control",
             AuthorizationHeader = string.Empty,
             DbPath = dbPath,
             LimitsConfigPath = limitsConfigPath,
