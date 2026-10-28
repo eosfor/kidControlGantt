@@ -16,9 +16,20 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - `Request/Extend` updates MikroTik and opens/extends access.
 - `Disable` stops active session and executes `kid-control pause` for the user.
 - Session state is stored in SQLite.
-- Audit events are stored in SQLite (`audit_log`) per target user: when `request/disable` was triggered, requested window, and actually granted window.
+- Audit events are stored in SQLite (`audit_log`) per target user: when `request/disable` was triggered, requested window, and authorized window. An audit event records the desired change, not confirmation of router synchronization.
 - User stats page includes the per-user audit timeline (request/window change/disable/auto-expire).
 - Email notifications: parents get emails on access start/change/disable/ending soon, children get ending-soon notifications.
+
+## Router state and recovery
+
+- The application exclusively owns all weekly time settings of users listed in `users`. Manual ordinary and unlimited-rate (`tur-*`) windows on these profiles are overwritten. Other router profiles are not modified.
+- SQLite sessions define the authorized interval. At startup and every `SWEEP_INTERVAL_SECONDS` (default 10), the app checks every managed profile, removes unrelated weekday windows, and restores the authorized interval. With no valid active session it clears the schedule and pauses the user.
+- A session change and its `pending_router_sync` marker are saved in one SQLite transaction before router mutations. The app pauses the user, replaces the schedule, reads it back before resume, and verifies the final state. Failed or cancelled changes remain pending and are retried after restart or on subsequent sweeps.
+- A failed access request may already have persisted authorization: a later retry can apply that same interval, with its original expiry. Downtime does not extend the grant or refund elapsed session time. A failed disable retains the blocked desired state and is retried.
+- Existing SQLite files are upgraded automatically by adding the pending table. A lost/recreated DB revokes router windows without corresponding sessions. Restoring an older DB makes that snapshot authoritative.
+- Requests, disables and reconciliation for the same user run sequentially. Run only one app instance against a router/state database. Stop the app before restoring/replacing its database.
+- Router failures are logged per managed user; failed HTTP operations return an error. The app cannot enforce a correction while the router API is unreachable, so existing router state can persist until connectivity returns.
+- Grade changes do not revoke or shorten an existing authorized session. Clock/NTP diagnostics are a separate task ([issue #2](https://github.com/eosfor/kidControlGantt/issues/2)).
 
 ## Limit rules
 
@@ -42,7 +53,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
   - `KidControlService.cs` - core limit/window rules and orchestration.
   - `MikrotikClient.cs` - MikroTik Kid Control REST API client.
   - `EmailNotificationService.cs` - SMTP notifications.
-  - `SessionSweepHostedService.cs` - background sweep for expired sessions.
+  - `SessionSweepHostedService.cs` - startup and periodic reconciliation of managed router schedules.
 - `app/Persistence/SessionRepository.cs` - SQLite persistence for sessions and audit log.
 - `app/Config/` - JSON config loading/caching and runtime env settings.
 - `app/Models/Contracts.cs` - API DTOs and internal records.
@@ -55,6 +66,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - Main tables:
   - `sessions` - active/history sessions and usage.
   - `audit_log` - audit trail for `request/disable` actions.
+  - `pending_router_sync` - managed users with unfinished router synchronization.
 
 ## Limits config
 
@@ -122,7 +134,7 @@ See `.env.example`.
 - `CURRENT_GRADES_PATH` - current grades JSON path (default `/app/config/currentGrades.json`).
 - `APP_TIMEZONE` - optional timezone override (e.g. `America/Los_Angeles`), takes precedence over JSON `timezone`.
 - `CONFIG_CACHE_TTL_MS` - config cache TTL.
-- `SWEEP_INTERVAL_SECONDS` - expired session cleanup interval.
+- `SWEEP_INTERVAL_SECONDS` - managed router schedule reconciliation interval.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_SSL` - SMTP settings for email notifications.
 
 ## API

@@ -1,19 +1,127 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 sealed class MikrotikClient
 {
+    private static readonly string[] DayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
     private readonly HttpClient _http;
+    private readonly TimeProvider _clock;
 
-    public MikrotikClient(HttpClient http, RuntimeSettings settings)
+    public MikrotikClient(HttpClient http, RuntimeSettings settings, TimeProvider? clock = null)
     {
         _http = http;
+        _clock = clock ?? TimeProvider.System;
         ApiUrl = settings.MikrotikKidControlUrl;
         AuthorizationHeader = settings.AuthorizationHeader;
     }
 
     public string ApiUrl { get; }
     public string AuthorizationHeader { get; }
+
+    public bool MatchesSession(Dictionary<string, string> entry, SessionRecord? session, TimeZoneInfo zone)
+    {
+        return MatchesSchedule(entry, BuildSchedule(session, zone))
+            && entry.TryGetValue("paused", out var paused)
+            && (session is null ? paused is "true" or "yes" : paused is "false" or "no");
+    }
+
+    private static bool MatchesSchedule(Dictionary<string, string> entry, Dictionary<string, string> patch) =>
+        patch.All(p => p.Key == "disabled"
+            ? entry.TryGetValue(p.Key, out var disabled) && disabled is "false" or "no"
+            : SameWindow(entry.GetValueOrDefault(p.Key) ?? string.Empty, p.Value));
+
+    public async Task SynchronizeSessionAsync(Dictionary<string, string> entry, SessionRecord? session, TimeZoneInfo zone, CancellationToken ct)
+    {
+        var patch = BuildSchedule(session, zone);
+        // Block first: a failed PATCH must not leave an older, broader schedule running.
+        await PauseUserAsync(entry, ct);
+        await PatchEntryAsync(entry, patch, ct);
+        var entries = await GetKidControlListAsync(ct);
+        var matches = entries.Where(e => e.GetValueOrDefault(".id") == GetEntryId(entry)).ToList();
+        if (matches.Count != 1 || !MatchesSchedule(matches[0], patch)
+            || matches[0].GetValueOrDefault("paused") is not ("true" or "yes"))
+        {
+            throw new AppHttpException(502, "MikroTik schedule verification failed; resume was not attempted");
+        }
+        if (session is not null && session.ExpiresAtMs > _clock.GetUtcNow().ToUnixTimeMilliseconds())
+        {
+            await ResumeUserAsync(entry, ct);
+        }
+    }
+
+    private static Dictionary<string, string> BuildSchedule(SessionRecord? session, TimeZoneInfo zone)
+    {
+        var patch = new Dictionary<string, string> { ["disabled"] = "false" };
+        foreach (var day in DayKeys)
+        {
+            patch[day] = string.Empty;
+            // Unlimited-rate windows can independently allow access.
+            patch[$"tur-{day}"] = string.Empty;
+        }
+        if (session is not null)
+        {
+            var start = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(session.StartedAtMs), zone);
+            var end = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(session.ExpiresAtMs), zone);
+            if (end <= start || end.Date != start.Date)
+            {
+                throw new InvalidOperationException($"Session {session.Id} must have a positive, same-day interval");
+            }
+            var day = start.DayOfWeek == DayOfWeek.Sunday ? "sun" : DayKeys[(int)start.DayOfWeek - 1];
+            patch[day] = BuildWindowValue(session.StartedAtMs, session.ExpiresAtMs, zone);
+        }
+        return patch;
+    }
+
+    private static bool SameWindow(string actual, string expected)
+    {
+        if (string.Equals(actual, expected, StringComparison.Ordinal))
+        {
+            return true;
+        }
+        return TryWindow(actual, out var actualWindow) && TryWindow(expected, out var expectedWindow)
+            && actualWindow == expectedWindow;
+    }
+
+    private static bool TryWindow(string value, out (int Start, int End) window)
+    {
+        window = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+        var parts = value.Split('-');
+        if (parts.Length != 2 || !TryTime(parts[0], out var start) || !TryTime(parts[1], out var end))
+        {
+            return false;
+        }
+        window = (start, end);
+        return true;
+    }
+
+    private static bool TryTime(string value, out int seconds)
+    {
+        seconds = 0;
+        if (TimeSpan.TryParseExact(value, [@"h\:mm", @"h\:mm\:ss", @"hh\:mm", @"hh\:mm\:ss"], CultureInfo.InvariantCulture, out var time))
+        {
+            seconds = (int)time.TotalSeconds;
+            return true;
+        }
+        var match = Regex.Match(value, @"^(?:(\d{1,2})h)?(?:(\d{1,2})m)?(?:(\d{1,2})s)?$", RegexOptions.CultureInvariant);
+        if (!match.Success || value.Length == 0)
+        {
+            return false;
+        }
+        for (var i = 1; i <= 3; i++)
+        {
+            if (match.Groups[i].Success)
+            {
+                seconds += int.Parse(match.Groups[i].Value, CultureInfo.InvariantCulture) * (i == 1 ? 3600 : i == 2 ? 60 : 1);
+            }
+        }
+        return true;
+    }
 
     public async Task<List<Dictionary<string, string>>> GetKidControlListAsync(CancellationToken ct)
     {

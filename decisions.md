@@ -117,3 +117,48 @@ Reasons:
 
 Telemetry:
 The full .NET test suite passed 30 tests, including regressions for a 300-minute restricted setting with a 120-minute base limit and for non-default threshold/TTL values propagated into user state. Both projects passed `dotnet format --verify-no-changes`; inline UI JavaScript syntax, JSON parsing, and `git diff --check` also passed.
+
+## 2026-10-27 21:58:17 PDT - Make SQLite authoritative for all managed router schedules
+
+Decision:
+For users listed in the access configuration, reconcile the entire weekly schedule against the current authorized SQLite session at startup and on every sweep. Clear all ordinary and unlimited-rate (`tur-*`) weekday windows except the authorized interval; without a valid active session, clear all windows and pause the profile. Do not modify profiles outside the configuration. Do not re-evaluate grades or shorten existing sessions during reconciliation.
+
+Reasons:
+- The owner confirmed that time management is exclusively through the application; manual windows on managed profiles must be overwritten.
+- The previous expired-session-only sweep could not discover orphan windows after DB loss or a failed manual disable. This replaces that incomplete cleanup strategy.
+- MikroTik documents that `tur-*` windows independently allow unlimited access, so clearing only `mon..sun` is insufficient. Source: https://help.mikrotik.com/docs/spaces/ROS/pages/129531911/Kid%2BControl
+- Pause before modifying the schedule, read back the result before resume, and verify the final state. Equivalent RouterOS clock formats must not cause repeated pause/resume cycles.
+
+Telemetry:
+Local HTTP/SQLite regression tests cover empty/recreated and older DB state, orphan ordinary and unlimited-rate windows, intact sessions, equivalent time formats, ignored PATCH operations, and unrelated profiles. No live router was contacted.
+
+## 2026-10-27 21:58:17 PDT - Persist authorization and pending synchronization atomically
+
+Decision:
+Save session start, extension, shortening or end together with a `pending_router_sync` row in one SQLite transaction, before router mutations. The session itself stores the desired authorized interval; the pending table identifies unfinished synchronization. Clear the marker only after router verification. Serialize request, disable and reconciliation per managed user within the singleton service.
+
+Reasons:
+- SQLite and RouterOS cannot share an atomic transaction. Persisting desired state first makes crashes between pause, PATCH, resume and completion recoverable by the next sweep.
+- A failed/cancelled router request retains the authorized interval and original absolute expiry; retry never grants a fresh duration. A persisted disable always wins over old router access, including after restart.
+- Full reconciliation runs even without pending rows, because DB loss or manual router changes can remove or bypass those markers.
+- The additional table is created automatically for existing DBs without rewriting session history. Coordination assumes one running application instance per router/state database; multiple replicas are outside the supported deployment.
+- A persisted grant can become effective on a later successful retry even when its original HTTP request failed. Until then, usage follows the persisted session timestamps, without extending the expiry to compensate for downtime.
+- Clock/NTP diagnostics are tracked separately in issue #2.
+
+Telemetry:
+Failure injection covers SQLite transaction rollback and router errors before/after commands, cancellation, expired pending grants, restart recovery, extension recovery and deterministic concurrent grant/sweep/disable ordering. Test time is provided through TimeProvider; production uses the system clock.
+
+## 2026-10-27 22:00:58 PDT - Accept local issue 1 implementation after recovery verification
+
+Decision:
+Keep the implementation and additive SQLite migration described above. Local verification is complete; live router rollout and clock monitoring are separate work.
+
+Reasons:
+- The 39 additional regression cases cover router/DB divergence, partial command outcomes, transaction rollback, completion failure after resume, deterministic concurrency, cancellation, DB migration and preservation of existing sessions under low grades.
+- The original 30 tests remain passing. Equivalent router windows produce no mutation on repeated sweeps.
+
+Telemetry:
+- `DOTNET_ROLL_FORWARD=Major dotnet test kidControlGantt.sln --no-restore`: 69 passed, 0 failed, 0 skipped; reported test duration 186 ms. Target remains net9.0; execution used the installed .NET 10.0.11 runtime because .NET 9 runtime is unavailable locally.
+- `dotnet build kidControlGantt.sln --no-restore -c Release`: succeeded, 0 warnings, 0 errors.
+- `dotnet format kidControlGantt.sln --no-restore --verify-no-changes` and `git diff --check`: passed.
+- Router integration was tested with a stateful HTTP handler and real temporary SQLite files; no live router/configuration was contacted or modified.
