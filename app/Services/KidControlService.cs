@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 
 sealed class KidControlService
@@ -15,24 +16,31 @@ sealed class KidControlService
         ["sun"] = "Воскресенье"
     };
 
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _userGates = new(StringComparer.Ordinal);
     private readonly AccessConfigProvider _configProvider;
+    private readonly GradeLimitPolicyEvaluator _gradeLimitPolicyEvaluator;
     private readonly SessionRepository _repo;
     private readonly MikrotikClient _mikrotik;
     private readonly EmailNotificationService _email;
     private readonly ILogger<KidControlService> _logger;
+    private readonly TimeProvider _clock;
 
     public KidControlService(
         AccessConfigProvider configProvider,
+        GradeLimitPolicyEvaluator gradeLimitPolicyEvaluator,
         SessionRepository repo,
         MikrotikClient mikrotik,
         EmailNotificationService email,
-        ILogger<KidControlService> logger)
+        ILogger<KidControlService> logger,
+        TimeProvider? clock = null)
     {
         _configProvider = configProvider;
+        _gradeLimitPolicyEvaluator = gradeLimitPolicyEvaluator;
         _repo = repo;
         _mikrotik = mikrotik;
         _email = email;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public void SweepExpiredSessions()
@@ -43,93 +51,120 @@ sealed class KidControlService
     public async Task SweepExpiredSessionsAsync(CancellationToken ct)
     {
         var cfg = _configProvider.GetConfig();
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var expired = _repo.ListExpiredActiveSessions(nowMs);
-        Dictionary<string, Dictionary<string, string>>? entriesByUser = null;
-
-        if (expired.Count > 0)
+        foreach (var user in cfg.Users)
         {
+            var gate = _userGates.GetOrAdd(user.Name, static _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct);
             try
             {
-                var entries = await _mikrotik.GetKidControlListAsync(ct);
-                entriesByUser = entries
-                    .Where(e => !string.IsNullOrWhiteSpace(e.GetValueOrDefault("name")))
-                    .GroupBy(e => e.GetValueOrDefault("name") ?? string.Empty, StringComparer.Ordinal)
-                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+                await ReconcileUserAsync(cfg, user, ct);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (Exception ex) when (ex is AppHttpException or HttpRequestException or OperationCanceledException
+                && !ct.IsCancellationRequested)
             {
-                throw;
+                _logger.LogWarning(ex, "Router synchronization failed for managed user {UserName}; will retry", user.Name);
             }
-            catch (Exception ex)
+            finally
             {
-                _logger.LogWarning(ex, "Failed to load MikroTik Kid Control list during expired-session sweep; will retry later");
+                gate.Release();
             }
         }
-
-        foreach (var session in expired)
-        {
-            if (entriesByUser is null)
-            {
-                // Don't mark the session expired in DB until MikroTik window/pause cleanup succeeds.
-                continue;
-            }
-
-            try
-            {
-                if (entriesByUser.TryGetValue(session.UserName, out var entry))
-                {
-                    var dayKey = GetDayKeyForTimestamp(session.ExpiresAtMs, cfg.TimeZone);
-                    await _mikrotik.DisableUserAsync(entry, dayKey, ct);
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "MikroTik entry for expired session user {UserName} not found during sweep; ending session in local DB only",
-                        session.UserName);
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Failed to clear MikroTik window/pause user {UserName} for expired session {SessionId}; will retry later",
-                    session.UserName,
-                    session.Id);
-                continue;
-            }
-
-            var ended = _repo.EndSession(session.Id, session.ExpiresAtMs, "expired", nowMs);
-            if (ended)
-            {
-                var grantedWindowMinutes = (int)Math.Max(0, (session.ExpiresAtMs - session.StartedAtMs) / 60_000L);
-                _repo.InsertAuditEvent(
-                    session.UserName,
-                    "expired",
-                    null,
-                    grantedWindowMinutes,
-                    session.ExpiresAtMs,
-                    null,
-                    session.ExpiresAtMs);
-
-                var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, session.UserName, StringComparison.Ordinal));
-                if (userCfg is not null)
-                {
-                    NotifyParentsExpired(cfg, userCfg, session.ExpiresAtMs);
-                }
-            }
-        }
-
-        NotifySoonEndingSessions(cfg, nowMs);
+        NotifySoonEndingSessions(cfg, _clock.GetUtcNow().ToUnixTimeMilliseconds());
     }
+
+    private void ExpireSession(AccessConfig cfg, UserLimitConfig user, long nowMs)
+    {
+        var session = _repo.GetActiveSession(user.Name);
+        if (session is null || session.ExpiresAtMs > nowMs)
+        {
+            return;
+        }
+        if (_repo.EndSession(session.Id, session.ExpiresAtMs, "expired", nowMs))
+        {
+            var minutes = (int)Math.Max(0, (session.ExpiresAtMs - session.StartedAtMs) / 60_000L);
+            _repo.InsertAuditEvent(user.Name, "expired", null, minutes, session.ExpiresAtMs, null, session.ExpiresAtMs);
+            NotifyParentsExpired(cfg, user, session.ExpiresAtMs);
+        }
+    }
+
+    private async Task<Dictionary<string, string>> GetManagedEntryAsync(string userName, CancellationToken ct)
+    {
+        var entries = await _mikrotik.GetKidControlListAsync(ct);
+        var matches = entries.Where(e => string.Equals(e.GetValueOrDefault("name"), userName, StringComparison.Ordinal)).ToList();
+        if (matches.Count == 0)
+        {
+            throw new AppHttpException(404, $"Пользователь {userName} не найден в MikroTik Kid Control");
+        }
+        if (matches.Count != 1)
+        {
+            throw new AppHttpException(502, $"Expected one MikroTik entry for managed user {userName}, found {matches.Count}");
+        }
+        return matches[0];
+    }
+
+    // Caller holds the user's gate across reading SQLite, router commands and verification.
+    private async Task ReconcileUserAsync(AccessConfig cfg, UserLimitConfig user, CancellationToken ct)
+    {
+        while (true)
+        {
+            var nowMs = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+            ExpireSession(cfg, user, nowMs);
+            var session = _repo.GetActiveSession(user.Name);
+            var entry = await GetManagedEntryAsync(user.Name, ct);
+            if (session is not null && (session.StartedAtMs > nowMs
+                || GetLocalDate(session.StartedAtMs, cfg.TimeZone) != GetLocalDate(session.ExpiresAtMs, cfg.TimeZone)))
+            {
+                _repo.MarkRouterSyncPending(user.Name);
+                await _mikrotik.SynchronizeSessionAsync(entry, null, cfg.TimeZone, ct);
+                throw new AppHttpException(502, $"Invalid authorized session {session.Id} for {user.Name}; router access blocked");
+            }
+            if (!_mikrotik.MatchesSession(entry, session, cfg.TimeZone))
+            {
+                _repo.MarkRouterSyncPending(user.Name);
+                await _mikrotik.SynchronizeSessionAsync(entry, session, cfg.TimeZone, ct);
+                entry = await GetManagedEntryAsync(user.Name, ct);
+            }
+            // A request may expire while a slow router command is in flight. Never leave it resumed.
+            if (session is not null && session.ExpiresAtMs <= _clock.GetUtcNow().ToUnixTimeMilliseconds())
+            {
+                continue;
+            }
+            if (!_mikrotik.MatchesSession(entry, session, cfg.TimeZone))
+            {
+                await _mikrotik.PauseUserAsync(entry, ct);
+                throw new AppHttpException(502, $"MikroTik state verification failed for {user.Name}; synchronization remains pending");
+            }
+            _repo.CompleteRouterSync(user.Name);
+            return;
+        }
+    }
+
+    private static DateTime GetLocalDate(long timestampMs, TimeZoneInfo zone) =>
+        TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(timestampMs), zone).Date;
 
     public async Task<List<Dictionary<string, string>>> GetKidControlAsync(CancellationToken ct)
     {
         return await _mikrotik.GetKidControlListAsync(ct);
+    }
+
+    public async Task<ClockResponse> GetClockAsync(CancellationToken ct)
+    {
+        var zone = _configProvider.GetConfig().TimeZone.Id;
+        var startMs = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+        try
+        {
+            var routerMs = await _mikrotik.GetClockAsync(ct);
+            var endMs = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+            // Compare the router sample to the middle of the request, not its arrival time.
+            return new ClockResponse(startMs + (endMs - startMs) / 2, routerMs, zone, null);
+        }
+        catch (Exception ex) when ((ex is AppHttpException or HttpRequestException or OperationCanceledException)
+            && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Failed to read MikroTik clock");
+            return new ClockResponse(_clock.GetUtcNow().ToUnixTimeMilliseconds(), null, zone,
+                "Не удалось получить время роутера");
+        }
     }
 
     public async Task<StateResponse> GetStateAsync(CancellationToken ct)
@@ -151,7 +186,7 @@ sealed class KidControlService
         }
 
         var normalizedDays = Math.Clamp(days, 1, 30);
-        var nowUtc = DateTimeOffset.UtcNow;
+        var nowUtc = _clock.GetUtcNow();
         var nowLocal = TimeZoneInfo.ConvertTime(nowUtc, cfg.TimeZone);
 
         var todayStartLocal = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, 0, 0, 0, DateTimeKind.Unspecified);
@@ -211,7 +246,25 @@ sealed class KidControlService
 
     public async Task<RequestResponse> RequestAccessAsync(string userName, int? windowMinutes, CancellationToken ct)
     {
-        await SweepExpiredSessionsAsync(ct);
+        var cfg = _configProvider.GetConfig();
+        if (!cfg.Users.Any(u => string.Equals(u.Name, userName, StringComparison.Ordinal)))
+        {
+            throw new AppHttpException(404, $"Пользователь {userName} отсутствует в конфигурации");
+        }
+        var gate = _userGates.GetOrAdd(userName, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            return await RequestAccessCoreAsync(userName, windowMinutes, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<RequestResponse> RequestAccessCoreAsync(string userName, int? windowMinutes, CancellationToken ct)
+    {
         var cfg = _configProvider.GetConfig();
         var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, userName, StringComparison.Ordinal));
 
@@ -220,6 +273,7 @@ sealed class KidControlService
             throw new AppHttpException(404, $"Пользователь {userName} отсутствует в конфигурации");
         }
 
+        ExpireSession(cfg, userCfg, _clock.GetUtcNow().ToUnixTimeMilliseconds());
         var day = GetDayContext(cfg.TimeZone);
         var dayWindow = GetDayWindowBounds(cfg, day);
         if (day.NowMs < dayWindow.StartMs)
@@ -232,7 +286,19 @@ sealed class KidControlService
             throw new AppHttpException(409, $"Запрос доступа после {FormatLocalTime(dayWindow.EndMs, cfg.TimeZone)} недоступен");
         }
 
-        var dayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var baseDayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var gradeDecision = await _gradeLimitPolicyEvaluator.EvaluateAsync(
+            userCfg,
+            baseDayLimitMinutes,
+            cfg.GraceMinutes,
+            cfg.TimeZone,
+            ct);
+        if (string.Equals(gradeDecision.Status, "SourceUnavailable", StringComparison.Ordinal))
+        {
+            throw new AppHttpException(409, "Нельзя выдать доступ: текущие оценки недоступны или устарели");
+        }
+
+        var dayLimitMinutes = gradeDecision.EffectiveLimitMinutes;
         var requestedWindowMinutes = Math.Clamp(windowMinutes ?? userCfg.DefaultWindowMinutes, 0, dayLimitMinutes);
 
         if (requestedWindowMinutes <= 0)
@@ -248,7 +314,7 @@ sealed class KidControlService
             throw new AppHttpException(409, $"Дневной лимит ({dayLimitMinutes} мин) исчерпан");
         }
 
-        var maxPerDaySeconds = dayLimitSeconds + (cfg.GraceMinutes * 60);
+        var maxPerDaySeconds = gradeDecision.HardCapMinutes * 60;
         var remainingCapSeconds = Math.Max(0, maxPerDaySeconds - usage.UsedSeconds);
         var secondsUntilWindowCutoff = Math.Max(0, (int)((dayWindow.CutoffMs - day.NowMs) / 1000));
         // Cap grant by both daily allowance and the configured day-end cutoff.
@@ -259,15 +325,20 @@ sealed class KidControlService
             throw new AppHttpException(409, "Невозможно выдать доступ: достигнут верхний лимит или завершился день");
         }
 
-        var entries = await _mikrotik.GetKidControlListAsync(ct);
-        var entry = entries.FirstOrDefault(e => string.Equals(e.GetValueOrDefault("name"), userCfg.Name, StringComparison.Ordinal));
-        if (entry is null)
+        var active = usage.ActiveSession;
+        var restrictionActive = gradeDecision.Status is "Restricted" or "RestrictedStale";
+        if (restrictionActive
+            && active is not null
+            && active.ExpiresAtMs - active.StartedAtMs > gradeDecision.HardCapMinutes * 60_000L)
         {
-            throw new AppHttpException(404, $"Пользователь {userCfg.Name} не найден в MikroTik Kid Control");
+            throw new AppHttpException(
+                409,
+                $"Текущая сессия уже превышает новый лимит {gradeDecision.HardCapMinutes} мин и остается без изменений; продление недоступно");
         }
 
+        await GetManagedEntryAsync(userCfg.Name, ct);
+
         var requestedWindowSeconds = requestedWindowMinutes * 60;
-        var active = usage.ActiveSession;
         var startMs = active is null ? day.NowMs : active.StartedAtMs;
         var requestedEndMs = active is null
             ? day.NowMs + (requestedWindowSeconds * 1000L)
@@ -284,8 +355,6 @@ sealed class KidControlService
         {
             throw new AppHttpException(409, "Недостаточно остатка времени для изменения доступа");
         }
-
-        await _mikrotik.ApplyWindowAsync(entry, day.DayKey, startMs, targetEndMs, cfg.TimeZone, ct);
 
         if (active is null)
         {
@@ -314,6 +383,7 @@ sealed class KidControlService
             auditDetails,
             day.NowMs);
 
+        await ReconcileUserAsync(cfg, userCfg, ct);
         NotifyParentsAccessChanged(
             cfg,
             userCfg,
@@ -329,7 +399,25 @@ sealed class KidControlService
 
     public async Task<DisableResponse> DisableAccessAsync(string userName, CancellationToken ct)
     {
-        await SweepExpiredSessionsAsync(ct);
+        var cfg = _configProvider.GetConfig();
+        if (!cfg.Users.Any(u => string.Equals(u.Name, userName, StringComparison.Ordinal)))
+        {
+            throw new AppHttpException(404, $"Пользователь {userName} отсутствует в конфигурации");
+        }
+        var gate = _userGates.GetOrAdd(userName, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            return await DisableAccessCoreAsync(userName, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<DisableResponse> DisableAccessCoreAsync(string userName, CancellationToken ct)
+    {
         var cfg = _configProvider.GetConfig();
         var userCfg = cfg.Users.FirstOrDefault(u => string.Equals(u.Name, userName, StringComparison.Ordinal));
 
@@ -338,14 +426,8 @@ sealed class KidControlService
             throw new AppHttpException(404, $"Пользователь {userName} отсутствует в конфигурации");
         }
 
+        ExpireSession(cfg, userCfg, _clock.GetUtcNow().ToUnixTimeMilliseconds());
         var day = GetDayContext(cfg.TimeZone);
-
-        var entries = await _mikrotik.GetKidControlListAsync(ct);
-        var entry = entries.FirstOrDefault(e => string.Equals(e.GetValueOrDefault("name"), userCfg.Name, StringComparison.Ordinal));
-        if (entry is null)
-        {
-            throw new AppHttpException(404, $"Пользователь {userCfg.Name} не найден в MikroTik Kid Control");
-        }
 
         var active = _repo.GetActiveSession(userCfg.Name);
         var hadActiveSession = false;
@@ -354,7 +436,7 @@ sealed class KidControlService
             hadActiveSession = _repo.EndSession(active.Id, day.NowMs, "manual", day.NowMs);
         }
 
-        await _mikrotik.DisableUserAsync(entry, day.DayKey, ct);
+        _repo.MarkRouterSyncPending(userCfg.Name);
 
         _repo.InsertAuditEvent(
             userCfg.Name,
@@ -365,8 +447,8 @@ sealed class KidControlService
             null,
             day.NowMs);
 
+        await ReconcileUserAsync(cfg, userCfg, ct);
         NotifyParentsDisabled(cfg, userCfg, hadActiveSession, day.NowMs);
-
         var state = await BuildStateAsync(cfg, ct);
         return new DisableResponse(true, userCfg.Name, state);
     }
@@ -397,7 +479,7 @@ sealed class KidControlService
         foreach (var userCfg in cfg.Users)
         {
             map.TryGetValue(userCfg.Name, out var entry);
-            users.Add(BuildStateRow(cfg, userCfg, entry, day));
+            users.Add(await BuildStateRowAsync(cfg, userCfg, entry, day, ct));
         }
 
         return new StateResponse(
@@ -417,12 +499,24 @@ sealed class KidControlService
         );
     }
 
-    private UserStateRow BuildStateRow(AccessConfig cfg, UserLimitConfig userCfg, Dictionary<string, string>? mikrotikEntry, DayContext day)
+    private async Task<UserStateRow> BuildStateRowAsync(
+        AccessConfig cfg,
+        UserLimitConfig userCfg,
+        Dictionary<string, string>? mikrotikEntry,
+        DayContext day,
+        CancellationToken ct)
     {
         var dayWindow = GetDayWindowBounds(cfg, day);
-        var dayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var baseDayLimitMinutes = userCfg.LimitsMinutes.GetValueOrDefault(day.DayKey, 0);
+        var gradeDecision = await _gradeLimitPolicyEvaluator.EvaluateAsync(
+            userCfg,
+            baseDayLimitMinutes,
+            cfg.GraceMinutes,
+            cfg.TimeZone,
+            ct);
+        var dayLimitMinutes = gradeDecision.EffectiveLimitMinutes;
         var dayLimitSeconds = dayLimitMinutes * 60;
-        var maxPerDaySeconds = dayLimitSeconds + (cfg.GraceMinutes * 60);
+        var maxPerDaySeconds = gradeDecision.HardCapMinutes * 60;
 
         var usage = GetUsageState(userCfg.Name, day.StartOfDayMs, day.NextDayMs, day.NowMs);
 
@@ -448,6 +542,11 @@ sealed class KidControlService
             );
         }
 
+        var restrictionActive = gradeDecision.Status is "Restricted" or "RestrictedStale";
+        var activeExceedsRestrictedLimit = restrictionActive
+            && usage.ActiveSession is not null
+            && usage.ActiveSession.ExpiresAtMs - usage.ActiveSession.StartedAtMs > gradeDecision.HardCapMinutes * 60_000L;
+
         return new UserStateRow(
             userCfg.Name,
             userCfg.DisplayName,
@@ -459,12 +558,24 @@ sealed class KidControlService
             mikrotikStatus.Active,
             mikrotikStatus.Status,
             dayLimitMinutes,
+            baseDayLimitMinutes,
+            gradeDecision.HardCapMinutes,
             usage.UsedSeconds,
             remainingSeconds,
             remainingCapSeconds,
             maxGrantSecondsNow,
-            existsInMikrotik && usage.UsedSeconds < dayLimitSeconds && maxGrantSecondsNow > 0 && inRequestWindow,
+            existsInMikrotik
+                && !activeExceedsRestrictedLimit
+                && usage.UsedSeconds < dayLimitSeconds
+                && maxGrantSecondsNow > 0
+                && inRequestWindow,
             Math.Clamp(userCfg.DefaultWindowMinutes, 0, dayLimitMinutes),
+            gradeDecision.Status,
+            gradeDecision.Threshold,
+            gradeDecision.NormalDecisionTtlMinutes,
+            gradeDecision.SourceAsOfUtc?.ToString("O", CultureInfo.InvariantCulture),
+            gradeDecision.LowGrades,
+            gradeDecision.ErrorCode,
             activeSession
         );
     }
@@ -892,9 +1003,9 @@ sealed class KidControlService
         };
     }
 
-    private static DayContext GetDayContext(TimeZoneInfo zone)
+    private DayContext GetDayContext(TimeZoneInfo zone)
     {
-        var nowUtc = DateTimeOffset.UtcNow;
+        var nowUtc = _clock.GetUtcNow();
         var localNow = TimeZoneInfo.ConvertTime(nowUtc, zone);
         var dayKey = DayKeyFromDayOfWeek(localNow.DayOfWeek);
 
@@ -910,12 +1021,6 @@ sealed class KidControlService
             new DateTimeOffset(startUtc, TimeSpan.Zero).ToUnixTimeMilliseconds(),
             new DateTimeOffset(nextUtc, TimeSpan.Zero).ToUnixTimeMilliseconds()
         );
-    }
-
-    private static string GetDayKeyForTimestamp(long utcMs, TimeZoneInfo zone)
-    {
-        var local = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(utcMs), zone);
-        return DayKeyFromDayOfWeek(local.DayOfWeek);
     }
 
     private static string DayKeyFromDayOfWeek(DayOfWeek dayOfWeek)

@@ -20,13 +20,19 @@
       "parentEmail": ["parent1@example.com", "parent2@example.com"],
       "defaultWindowMinutes": 120,
       "limitsMinutes": {
-        "mon": 120,
-        "tue": 120,
-        "wed": 120,
-        "thu": 120,
-        "fri": 120,
-        "sat": 120,
-        "sun": 120
+        "mon": 600,
+        "tue": 600,
+        "wed": 600,
+        "thu": 600,
+        "fri": 600,
+        "sat": 600,
+        "sun": 600
+      },
+      "gradeLimitPolicy": {
+        "enabled": true,
+        "threshold": 0.85,
+        "restrictedLimitMinutes": 300,
+        "normalDecisionTtlMinutes": 20160
       }
     }
   ]

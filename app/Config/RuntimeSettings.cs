@@ -7,6 +7,7 @@ sealed class RuntimeSettings
     public required string AuthorizationHeader { get; init; }
     public required string DbPath { get; init; }
     public required string LimitsConfigPath { get; init; }
+    public required string CurrentGradesPath { get; init; }
     public required int ConfigCacheTtlMs { get; init; }
     public required int SweepIntervalSeconds { get; init; }
     public required string TimezoneOverride { get; init; }
@@ -44,6 +45,7 @@ sealed class RuntimeSettings
             AuthorizationHeader = authHeader ?? string.Empty,
             DbPath = cfg["DB_PATH"] ?? "/data/kid-control-state.db",
             LimitsConfigPath = cfg["LIMITS_CONFIG_PATH"] ?? "/app/config/kid-access-config.json",
+            CurrentGradesPath = cfg["CURRENT_GRADES_PATH"] ?? "/app/config/currentGrades.json",
             ConfigCacheTtlMs = ParseInt(cfg["CONFIG_CACHE_TTL_MS"], 5000),
             SweepIntervalSeconds = ParseInt(cfg["SWEEP_INTERVAL_SECONDS"], 10),
             TimezoneOverride = cfg["APP_TIMEZONE"] ?? cfg["TIMEZONE"] ?? string.Empty,

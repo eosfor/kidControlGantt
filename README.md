@@ -6,6 +6,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 
 - Reads users from `MikroTik /rest/ip/kid-control`.
 - Shows only users listed in limits config.
+- Shows server/SQLite timestamp time and router time above the table, refreshed every five seconds. Both values use the application time zone and are highlighted when they differ by more than five seconds. Router errors leave its time unavailable while server time remains visible. This display does not configure NTP or change access rules.
 - Per user UI shows:
   - current day limit,
   - remaining time to limit,
@@ -16,9 +17,20 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - `Request/Extend` updates MikroTik and opens/extends access.
 - `Disable` stops active session and executes `kid-control pause` for the user.
 - Session state is stored in SQLite.
-- Audit events are stored in SQLite (`audit_log`) per target user: when `request/disable` was triggered, requested window, and actually granted window.
+- Audit events are stored in SQLite (`audit_log`) per target user: when `request/disable` was triggered, requested window, and authorized window. An audit event records the desired change, not confirmation of router synchronization.
 - User stats page includes the per-user audit timeline (request/window change/disable/auto-expire).
 - Email notifications: parents get emails on access start/change/disable/ending soon, children get ending-soon notifications.
+
+## Router state and recovery
+
+- The application exclusively owns all weekly time settings of users listed in `users`. Manual ordinary and unlimited-rate (`tur-*`) windows on these profiles are overwritten. Other router profiles are not modified.
+- SQLite sessions define the authorized interval. At startup and every `SWEEP_INTERVAL_SECONDS` (default 10), the app checks every managed profile, removes unrelated weekday windows, and restores the authorized interval. With no valid active session it clears the schedule and pauses the user.
+- A session change and its `pending_router_sync` marker are saved in one SQLite transaction before router mutations. The app pauses the user, replaces the schedule, reads it back before resume, and verifies the final state. Failed or cancelled changes remain pending and are retried after restart or on subsequent sweeps.
+- A failed access request may already have persisted authorization: a later retry can apply that same interval, with its original expiry. Downtime does not extend the grant or refund elapsed session time. A failed disable retains the blocked desired state and is retried.
+- Existing SQLite files are upgraded automatically by adding the pending table. A lost/recreated DB revokes router windows without corresponding sessions. Restoring an older DB makes that snapshot authoritative.
+- Requests, disables and reconciliation for the same user run sequentially. Run only one app instance against a router/state database. Stop the app before restoring/replacing its database.
+- Router failures are logged per managed user; failed HTTP operations return an error. The app cannot enforce a correction while the router API is unreachable, so existing router state can persist until connectivity returns.
+- Grade changes do not revoke or shorten an existing authorized session. The clock panel is informational; it does not configure NTP or change access decisions ([issue #2](https://github.com/eosfor/kidControlGantt/issues/2)).
 
 ## Limit rules
 
@@ -31,6 +43,9 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - UI window size is clamped to `0..dayLimit`.
 - Access requests are blocked before `start` and after `end`, even with remaining limit.
 - At `end + 10 minutes` access is forcibly cut off (hard cutoff).
+- One user can optionally have `gradeLimitPolicy` enabled. A grade below the configured threshold changes only new requests/extensions; an existing session is never changed automatically.
+- Under a grade restriction, the effective limit and hard cap both equal `min(dayLimit, restrictedLimitMinutes)`, so the rule never increases access and global grace is not added.
+- A stale report with a low grade keeps the restriction. A stale normal report or invalid grade source blocks new requests but does not stop an active session.
 
 ## Architecture
 
@@ -39,7 +54,7 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
   - `KidControlService.cs` - core limit/window rules and orchestration.
   - `MikrotikClient.cs` - MikroTik Kid Control REST API client.
   - `EmailNotificationService.cs` - SMTP notifications.
-  - `SessionSweepHostedService.cs` - background sweep for expired sessions.
+  - `SessionSweepHostedService.cs` - startup and periodic reconciliation of managed router schedules.
 - `app/Persistence/SessionRepository.cs` - SQLite persistence for sessions and audit log.
 - `app/Config/` - JSON config loading/caching and runtime env settings.
 - `app/Models/Contracts.cs` - API DTOs and internal records.
@@ -47,10 +62,12 @@ ASP.NET Core web app for managing `MikroTik Kid Control` with daily limits and a
 - `app/wwwroot/user-stats.html` - per-user stats page (Gantt + audit).
 - `config/kid-access-config.json` - active limits config.
 - `config/kid-access-config.example.json` - sample config.
+- `config/currentGrades.json` - current grade snapshot displayed on the main page.
 - SQLite path comes from `DB_PATH` (default `/data/kid-control-state.db`).
 - Main tables:
   - `sessions` - active/history sessions and usage.
   - `audit_log` - audit trail for `request/disable` actions.
+  - `pending_router_sync` - managed users with unfinished router synchronization.
 
 ## Limits config
 
@@ -79,13 +96,19 @@ File: `config/kid-access-config.json`
       "parentEmail": ["parent1@example.com", "parent2@example.com"],
       "defaultWindowMinutes": 120,
       "limitsMinutes": {
-        "mon": 120,
-        "tue": 120,
-        "wed": 120,
-        "thu": 120,
-        "fri": 120,
-        "sat": 120,
-        "sun": 120
+        "mon": 600,
+        "tue": 600,
+        "wed": 600,
+        "thu": 600,
+        "fri": 600,
+        "sat": 600,
+        "sun": 600
+      },
+      "gradeLimitPolicy": {
+        "enabled": true,
+        "threshold": 0.85,
+        "restrictedLimitMinutes": 300,
+        "normalDecisionTtlMinutes": 20160
       }
     }
   ]
@@ -95,6 +118,9 @@ File: `config/kid-access-config.json`
 If a user exists in MikroTik but is missing in `users`, it is hidden from UI.
 `parentEmail` supports both formats: string (`"parent@example.com"`) and array of strings.
 If `email` or `parentEmail` is missing/empty, corresponding email notifications are skipped.
+The current implementation allows at most one user with `gradeLimitPolicy.enabled: true` because `currentGrades.json` contains one user snapshot. `normalDecisionTtlMinutes: 20160` is 14 days. The UI receives the configured threshold and TTL from `/api/state`; neither value is hardcoded in the display logic.
+
+The grades snapshot must contain `userName`, a parseable `asOf`, and `currentGrades`. `asOf` accepts ISO 8601 or `MM/dd/yyyy hh:mm tt` in the application timezone. `averagePercentage` is a fraction from `0` through `1`; `null` grades are ignored by the policy.
 
 ## Environment variables
 
@@ -106,9 +132,10 @@ See `.env.example`.
 - `BASIC_AUTH` - optional auth header override.
 - `DB_PATH` - SQLite DB path.
 - `LIMITS_CONFIG_PATH` - limits config path.
+- `CURRENT_GRADES_PATH` - current grades JSON path (default `/app/config/currentGrades.json`).
 - `APP_TIMEZONE` - optional timezone override (e.g. `America/Los_Angeles`), takes precedence over JSON `timezone`.
 - `CONFIG_CACHE_TTL_MS` - config cache TTL.
-- `SWEEP_INTERVAL_SECONDS` - expired session cleanup interval.
+- `SWEEP_INTERVAL_SECONDS` - managed router schedule reconciliation interval.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_SSL` - SMTP settings for email notifications.
 
 ## API
@@ -117,6 +144,8 @@ See `.env.example`.
 - `GET /api/kid-control` - raw MikroTik kid-control list.
 - `GET /api/state` - UI state payload.
   - Includes per-user `mikrotikStatus` (for example: `active`, `blocked`, `paused`, `blocked+paused`).
+- `GET /api/clock` - server/router time samples (`serverTimeMs`, nullable `routerTimeMs`, display `timezone`, nullable `routerError`). Router read failures return a partial response with server time.
+- `GET /api/current-grades` - current grade snapshot, including `userName`, for the main page.
 - `GET /api/users/{name}/stats` - per-user stats with Gantt + `auditEvents` for the selected period.
 - `POST /api/users/{name}/request`
   - body: `{ "windowMinutes": 120 }`

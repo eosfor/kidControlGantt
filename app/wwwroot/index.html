@@ -46,6 +46,11 @@
       font-size: 1.4rem;
     }
 
+    h2 {
+      margin: 20px 0 8px;
+      font-size: 1.15rem;
+    }
+
     .meta {
       margin-bottom: 12px;
       color: var(--muted);
@@ -103,6 +108,37 @@
       font-weight: 600;
     }
 
+    .clock-panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      margin: 10px 0 16px;
+      font-size: 14px;
+    }
+
+    .clock-value {
+      display: inline-block;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .clock-skew .clock-value {
+      background: #fff0f0;
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    .clock-status {
+      flex-basis: 100%;
+      color: var(--muted);
+    }
+
+    .clock-skew .clock-status,
+    .clock-unavailable .clock-status {
+      color: var(--danger);
+    }
+
     .table-wrap {
       overflow-x: auto;
       border: 1px solid var(--line);
@@ -136,6 +172,19 @@
 
     tr:last-child td {
       border-bottom: none;
+    }
+
+    .grades-table {
+      min-width: 650px;
+    }
+
+    .grades-table tr.grade-low td {
+      background: #fff0f0;
+      color: #7f1d1d;
+    }
+
+    .grades-as-of {
+      margin-bottom: 8px;
     }
 
     .user {
@@ -215,8 +264,171 @@
         font-size: 1.15rem;
       }
 
+      h2 {
+        font-size: 1.05rem;
+      }
+
       .toolbar button {
         width: 100%;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .grades-as-of {
+        margin-bottom: 12px;
+      }
+
+      .grades-wrap {
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+      }
+
+      .grades-table {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        background: transparent;
+      }
+
+      .grades-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .grades-table tbody {
+        display: grid;
+        width: 100%;
+        gap: 12px;
+      }
+
+      .grades-table tbody tr {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "class mark"
+          "missing percentage"
+          "updated updated";
+        gap: 4px 12px;
+        width: 100%;
+        padding: 12px;
+        margin-bottom: 0;
+        border: 1px solid #bfcbe0;
+        border-radius: 8px;
+        background: var(--card);
+        box-shadow: 0 2px 3px rgba(17, 31, 60, 0.12);
+      }
+
+      .grades-table tbody td {
+        width: auto;
+        border: 0;
+        padding: 0;
+        min-width: 0;
+      }
+
+      .grades-table tbody td::before {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 400;
+      }
+
+      .grades-table tbody td:nth-child(1) {
+        grid-area: class;
+        color: var(--primary-hover);
+        font-size: 17px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .grades-table tbody td:nth-child(1)::before {
+        display: none;
+      }
+
+      .grades-table tbody td:nth-child(2) {
+        grid-area: percentage;
+        align-self: end;
+        color: var(--muted);
+        text-align: right;
+      }
+
+      .grades-table tbody td:nth-child(2)::before {
+        content: "(";
+        display: inline;
+        margin: 0;
+      }
+
+      .grades-table tbody td:nth-child(2)::after {
+        content: ")";
+      }
+
+      .grades-table tbody td:nth-child(3) {
+        grid-area: mark;
+        color: var(--primary-hover);
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1;
+        text-align: right;
+      }
+
+      .grades-table tbody td:nth-child(3)::before {
+        content: "Оценка";
+        display: block;
+        margin-bottom: 2px;
+      }
+
+      .grades-table tbody td:nth-child(4) {
+        grid-area: missing;
+        align-self: end;
+        color: var(--muted);
+      }
+
+      .grades-table tbody td:nth-child(4)::before {
+        content: "Пропущено ";
+        display: inline;
+        margin: 0;
+      }
+
+      .grades-table tbody td:nth-child(5) {
+        grid-area: updated;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .grades-table tbody td:nth-child(5)::before {
+        content: "Обновлено: ";
+        display: inline;
+        margin: 0;
+      }
+
+      .grades-table tr.grade-low td {
+        background: transparent;
+      }
+
+      .grades-table tr.grade-low {
+        background: #fff0f0;
+        border-color: #e6bcbc;
+      }
+
+      .grades-table tr.grade-low td:nth-child(1),
+      .grades-table tr.grade-low td:nth-child(3) {
+        color: var(--danger);
+      }
+
+      .grades-table tr.grade-empty {
+        display: block;
+      }
+
+      .grades-table tr.grade-empty td {
+        color: var(--muted);
       }
     }
 
@@ -257,29 +469,29 @@
     }
 
     @media (max-width: 760px) {
-      .table-wrap {
+      .access-table-wrap {
         overflow-x: visible;
         border: none;
       }
 
-      table,
-      thead,
-      tbody,
-      tr,
-      td {
+      .access-table,
+      .access-table thead,
+      .access-table tbody,
+      .access-table tr,
+      .access-table td {
         display: block;
         width: 100%;
       }
 
-      thead {
+      .access-table thead {
         display: none;
       }
 
-      table {
+      .access-table {
         min-width: 0;
       }
 
-      tr {
+      .access-table tr {
         border: 1px solid var(--line);
         border-radius: 10px;
         margin-bottom: 10px;
@@ -287,20 +499,20 @@
         background: #fff;
       }
 
-      tr:last-child {
+      .access-table tr:last-child {
         margin-bottom: 0;
       }
 
-      td {
+      .access-table td {
         border-bottom: 1px dashed #d9e1ee;
         padding: 10px 0;
       }
 
-      td:last-child {
+      .access-table td:last-child {
         border-bottom: none;
       }
 
-      td::before {
+      .access-table td::before {
         content: attr(data-label);
         display: block;
         margin-bottom: 6px;
@@ -329,6 +541,12 @@
     <h1>Управление доступом MikroTik Kid Control</h1>
     <div class="meta" id="meta"></div>
 
+    <div class="clock-panel" id="clockPanel">
+      <span title="Время сервера, которое приложение записывает в SQLite">Время сервера/БД: <time class="clock-value" id="serverClock">—</time></span>
+      <span>Время роутера: <time class="clock-value" id="routerClock">—</time></span>
+      <span class="clock-status" id="clockStatus" role="status">Загрузка времени…</span>
+    </div>
+
     <div class="toolbar">
       <button id="reloadBtn" type="button">Обновить</button>
       <span class="muted">Для активной сессии кнопка меняется на "Изменить текущую сессию".</span>
@@ -336,8 +554,30 @@
 
     <div class="status" id="status"></div>
 
-    <div class="table-wrap">
-      <table>
+    <section aria-labelledby="gradesHeading">
+      <h2 id="gradesHeading">Текущие оценки</h2>
+      <div class="muted grades-as-of" id="gradesAsOf"></div>
+      <div class="status" id="gradesStatus"></div>
+      <div class="table-wrap grades-wrap">
+        <table class="grades-table">
+          <thead>
+            <tr>
+              <th>Класс</th>
+              <th>Средний процент</th>
+              <th>Оценка</th>
+              <th>Пропущено</th>
+              <th>Последнее обновление</th>
+            </tr>
+          </thead>
+          <tbody id="gradeRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <h2>Запрос времени</h2>
+
+    <div class="table-wrap access-table-wrap">
+      <table class="access-table">
         <thead>
           <tr>
             <th>Пользователь</th>
@@ -355,22 +595,161 @@
 
   <script>
     let state = null;
+    let gradesPayload = null;
     let syncTimestampMs = 0;
     let clientSyncAtMs = 0;
     let isStateFetchInFlight = false;
     let stateFetchSeq = 0;
     let latestAppliedStateFetchSeq = 0;
+    let clockPayload = null;
+    let clockSyncAtMs = 0;
+    let isClockFetchInFlight = false;
+    const clockDifferenceToleranceMs = 5000;
     const selectedWindows = {};
     const rowRefs = new Map();
 
     const rowsEl = document.getElementById('rows');
+    const gradeRowsEl = document.getElementById('gradeRows');
+    const gradesAsOfEl = document.getElementById('gradesAsOf');
+    const gradesStatusEl = document.getElementById('gradesStatus');
     const statusEl = document.getElementById('status');
     const metaEl = document.getElementById('meta');
     const reloadBtn = document.getElementById('reloadBtn');
+    const clockPanelEl = document.getElementById('clockPanel');
+    const serverClockEl = document.getElementById('serverClock');
+    const routerClockEl = document.getElementById('routerClock');
+    const clockStatusEl = document.getElementById('clockStatus');
+
+    function renderClocks() {
+      if (!clockPayload) {
+        return;
+      }
+      const elapsedMs = performance.now() - clockSyncAtMs;
+      const format = (ms) => new Date(ms + elapsedMs).toLocaleString('ru-RU', {
+        timeZone: clockPayload.timezone, hour12: false
+      });
+      serverClockEl.textContent = format(clockPayload.serverTimeMs);
+      const available = Number.isFinite(clockPayload.routerTimeMs);
+      routerClockEl.textContent = available ? format(clockPayload.routerTimeMs) : '—';
+      const differenceMs = available ? Math.abs(clockPayload.serverTimeMs - clockPayload.routerTimeMs) : 0;
+      const differs = available && differenceMs > clockDifferenceToleranceMs;
+      clockPanelEl.classList.toggle('clock-skew', differs);
+      clockPanelEl.classList.toggle('clock-unavailable', !available);
+      const message = available
+        ? differs ? `Расхождение часов: примерно ${Math.round(differenceMs / 1000)} с.` : 'Часы согласованы (допуск 5 с).'
+        : clockPayload.routerError || 'Не удалось получить время роутера';
+      if (clockStatusEl.textContent !== message) {
+        clockStatusEl.textContent = message;
+      }
+    }
+
+    async function fetchClock() {
+      if (isClockFetchInFlight) {
+        return;
+      }
+      isClockFetchInFlight = true;
+      try {
+        const response = await fetch('/api/clock', { cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+        clockPayload = payload;
+        clockSyncAtMs = performance.now();
+        renderClocks();
+      } catch (error) {
+        if (clockPayload) {
+          clockPayload.routerTimeMs = null;
+          clockPayload.routerError = `Не удалось обновить время: ${error.message}`;
+          renderClocks();
+        } else {
+          clockPanelEl.classList.add('clock-unavailable');
+          clockStatusEl.textContent = `Не удалось обновить время: ${error.message}`;
+        }
+      } finally {
+        isClockFetchInFlight = false;
+      }
+    }
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message || '';
       statusEl.classList.toggle('error', Boolean(isError));
+    }
+
+    function setGradesStatus(message, isError = false) {
+      gradesStatusEl.textContent = message || '';
+      gradesStatusEl.classList.toggle('error', Boolean(isError));
+    }
+
+    function appendGradeCell(rowElement, label, value) {
+      const cell = document.createElement('td');
+      cell.dataset.label = label;
+      cell.textContent = value;
+      rowElement.appendChild(cell);
+    }
+
+    function formatPercentage(value) {
+      return Number.isFinite(value)
+        ? new Intl.NumberFormat('ru-RU', { style: 'percent', maximumFractionDigits: 1 }).format(value)
+        : '—';
+    }
+
+    function renderGrades(payload) {
+      gradeRowsEl.replaceChildren();
+      gradesAsOfEl.textContent = payload.asOf ? `Данные на: ${payload.asOf}` : '';
+      const policyUser = Array.isArray(state?.users)
+        ? state.users.find((row) => String(row.name || '').trim().toLowerCase() === String(payload.userName || '').trim().toLowerCase())
+        : null;
+      const threshold = typeof policyUser?.gradeRestrictionThreshold === 'number'
+        ? policyUser.gradeRestrictionThreshold
+        : Number.NaN;
+
+      const grades = Array.isArray(payload.currentGrades) ? payload.currentGrades : [];
+      if (grades.length === 0) {
+        const row = document.createElement('tr');
+        row.classList.add('grade-empty');
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.textContent = 'Нет текущих оценок для отображения.';
+        row.appendChild(cell);
+        gradeRowsEl.appendChild(row);
+        return;
+      }
+
+      for (const grade of grades) {
+        const row = document.createElement('tr');
+        if (Number.isFinite(threshold)
+          && Number.isFinite(grade.averagePercentage)
+          && grade.averagePercentage < threshold) {
+          row.classList.add('grade-low');
+        }
+
+        appendGradeCell(row, 'Класс', grade.classId || '—');
+        appendGradeCell(row, 'Средний процент', formatPercentage(grade.averagePercentage));
+        appendGradeCell(row, 'Оценка', grade.mark || '—');
+        appendGradeCell(row, 'Пропущено', Number.isInteger(grade.missing) ? String(grade.missing) : '—');
+        appendGradeCell(row, 'Последнее обновление', grade.lastUpdated || '—');
+        gradeRowsEl.appendChild(row);
+      }
+    }
+
+    async function fetchGrades() {
+      try {
+        const response = await fetch('/api/current-grades', { method: 'GET', cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        gradesPayload = payload;
+        renderGrades(gradesPayload);
+        setGradesStatus('');
+      } catch (error) {
+        gradesPayload = null;
+        gradeRowsEl.replaceChildren();
+        gradesAsOfEl.textContent = '';
+        setGradesStatus(`Ошибка загрузки оценок: ${error.message}`, true);
+      }
     }
 
     function fmtDuration(totalSeconds) {
@@ -440,10 +819,15 @@
       const dayLimitSeconds = row.dayLimitMinutes * 60;
       const extraUsedSeconds = Math.max(0, dynamicUsedSeconds - row.usedSeconds);
       const dynamicRemainingCapSeconds = Math.max(0, row.remainingCapSeconds - extraUsedSeconds);
+      const gradeStatus = String(row.gradeRestrictionStatus || 'NotConfigured');
+      const activeExceedsRestrictedLimit = (gradeStatus === 'Restricted' || gradeStatus === 'RestrictedStale')
+        && row.activeSession
+        && row.activeSession.totalSeconds > Number(row.hardCapMinutes || 0) * 60;
       const inRequestWindow = (!state.dayWindowStartMs || nowMs >= state.dayWindowStartMs)
         && (!state.dayWindowEndMs || nowMs <= state.dayWindowEndMs);
 
       return row.existsInMikrotik
+        && !activeExceedsRestrictedLimit
         && dynamicUsedSeconds < dayLimitSeconds
         && dynamicRemainingCapSeconds > 0
         && inRequestWindow;
@@ -451,6 +835,56 @@
 
     function getRequestButtonLabel(row) {
       return row.activeSession ? 'Изменить текущую сессию' : 'Запросить доступ';
+    }
+
+    function formatPolicyTtl(minutes) {
+      const value = Number(minutes);
+      if (!Number.isFinite(value) || value <= 0) {
+        return 'настроенного срока';
+      }
+      if (value % 1440 === 0) {
+        return `${value / 1440} дн.`;
+      }
+      if (value % 60 === 0) {
+        return `${value / 60} ч.`;
+      }
+      return `${value} мин.`;
+    }
+
+    function getGradePolicyPresentation(row) {
+      const status = String(row.gradeRestrictionStatus || 'NotConfigured');
+      if (status === 'SourceUnavailable') {
+        const sourceMessage = row.gradeRestrictionErrorCode === 'stale_normal'
+          ? `Отчёт старше ${formatPolicyTtl(row.gradeRestrictionNormalTtlMinutes)}.`
+          : 'Файл оценок отсутствует или некорректен.';
+        return {
+          message: `Новые запросы временно недоступны: ${sourceMessage}`,
+          className: 'danger'
+        };
+      }
+
+      if (status !== 'Restricted' && status !== 'RestrictedStale') {
+        return { message: '', className: 'muted' };
+      }
+
+      const lowGrades = Array.isArray(row.gradeRestrictionLowClasses)
+        ? row.gradeRestrictionLowClasses
+            .map((grade) => `${grade.classId}: ${formatPercentage(grade.averagePercentage)}`)
+            .join(', ')
+        : '';
+      const staleNote = status === 'RestrictedStale'
+        ? ` Отчёт старше ${formatPolicyTtl(row.gradeRestrictionNormalTtlMinutes)}.`
+        : '';
+      const activeExceedsLimit = row.activeSession
+        && row.activeSession.totalSeconds > Number(row.hardCapMinutes || 0) * 60;
+      const sessionNote = activeExceedsLimit
+        ? ' Текущая сессия не изменена; лимит применяется к следующим запросам.'
+        : '';
+
+      return {
+        message: `Лимит новых запросов снижен до ${row.dayLimitMinutes} мин.${lowGrades ? ` ${lowGrades}.` : ''}${staleNote}${sessionNote}`,
+        className: 'warning'
+      };
     }
 
     function shouldRebuildRows(nextState) {
@@ -502,6 +936,7 @@
         selectedWindows[row.name] = selectedWindow;
 
         const userStatus = buildUserStatus(row);
+        const gradePolicy = getGradePolicyPresentation(row);
 
         if (refs.dayLimitEl) {
           refs.dayLimitEl.textContent = fmtDuration(dayLimitSeconds);
@@ -510,6 +945,11 @@
         if (refs.userStatusEl) {
           refs.userStatusEl.textContent = userStatus.label;
           refs.userStatusEl.className = userStatus.className;
+        }
+
+        if (refs.gradePolicyEl) {
+          refs.gradePolicyEl.textContent = gradePolicy.message;
+          refs.gradePolicyEl.className = gradePolicy.className;
         }
 
         if (refs.windowInputEl) {
@@ -541,6 +981,10 @@
         updateStaticRows();
         updateLiveRows();
       }
+
+      if (gradesPayload) {
+        renderGrades(gradesPayload);
+      }
     }
 
     function renderRows() {
@@ -561,6 +1005,7 @@
         const remainingSeconds = Math.max(0, dayLimitSeconds - dynamicUsedSeconds);
         const windowRemaining = row.activeSession ? Math.max(0, Math.floor((row.activeSession.endsAtMs - nowMs) / 1000)) : 0;
         const userStatus = buildUserStatus(row);
+        const gradePolicy = getGradePolicyPresentation(row);
 
         if (!(row.name in selectedWindows)) {
           selectedWindows[row.name] = row.suggestedWindowMinutes;
@@ -580,6 +1025,7 @@
           <td data-label="Пользователь">
             <div class="user"><a class="user-link" href="/user-stats.html?user=${encodeURIComponent(row.name)}">${row.displayName}</a></div>
             <div class="muted">${row.name} | <span data-field="user-status" class="${userStatus.className}">${userStatus.label}</span></div>
+            <div data-field="grade-policy"></div>
           </td>
           <td data-label="Лимит на сегодня"><span data-field="day-limit">${fmtDuration(dayLimitSeconds)}</span></td>
           <td data-label="Остаток до лимита"><span data-field="remaining" class="${remainingSeconds === 0 ? 'danger' : 'ok'}">${fmtDuration(remainingSeconds)}</span></td>
@@ -609,6 +1055,7 @@
         rowRefs.set(row.name, {
           dayLimitEl: tr.querySelector('[data-field="day-limit"]'),
           userStatusEl: tr.querySelector('[data-field="user-status"]'),
+          gradePolicyEl: tr.querySelector('[data-field="grade-policy"]'),
           remainingEl: tr.querySelector('[data-field="remaining"]'),
           windowRemainingEl: tr.querySelector('[data-field="window-remaining"]'),
           windowInputEl: tr.querySelector('[data-role="window"]'),
@@ -616,6 +1063,12 @@
           requestBtn: tr.querySelector('[data-field="request-btn"]'),
           disableBtn: tr.querySelector('[data-field="disable-btn"]')
         });
+
+        const gradePolicyEl = tr.querySelector('[data-field="grade-policy"]');
+        if (gradePolicyEl) {
+          gradePolicyEl.textContent = gradePolicy.message;
+          gradePolicyEl.className = gradePolicy.className;
+        }
 
         rowsEl.appendChild(tr);
       }
@@ -788,17 +1241,29 @@
       }
     });
 
-    reloadBtn.addEventListener('click', () => fetchState(true, true));
+    reloadBtn.addEventListener('click', async () => {
+      reloadBtn.disabled = true;
+      await Promise.all([fetchState(true), fetchGrades(), fetchClock()]);
+      reloadBtn.disabled = false;
+    });
 
     setInterval(() => {
       updateLiveRows();
+      renderClocks();
     }, 1000);
 
     setInterval(() => {
       fetchState(false);
+      fetchClock();
     }, 5000);
 
+    setInterval(() => {
+      fetchGrades();
+    }, 60000);
+
     fetchState(true);
+    fetchGrades();
+    fetchClock();
   </script>
 </body>
 </html>

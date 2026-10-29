@@ -173,7 +173,9 @@ sealed class SessionRepository
         lock (_sync)
         {
             using var conn = OpenConnection();
+            using var transaction = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
             cmd.CommandText = @"
                 INSERT INTO sessions (user_name, started_at_ms, expires_at_ms, ended_at_ms, ended_reason, soon_notified_at_ms, created_at_ms, updated_at_ms)
                 VALUES ($user_name, $started_at_ms, $expires_at_ms, NULL, NULL, NULL, $now_ms, $now_ms)";
@@ -182,6 +184,8 @@ sealed class SessionRepository
             cmd.Parameters.AddWithValue("$expires_at_ms", expiresAtMs);
             cmd.Parameters.AddWithValue("$now_ms", nowMs);
             cmd.ExecuteNonQuery();
+            MarkRouterSyncPending(conn, transaction, userName);
+            transaction.Commit();
         }
     }
 
@@ -190,7 +194,9 @@ sealed class SessionRepository
         lock (_sync)
         {
             using var conn = OpenConnection();
+            using var transaction = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
             cmd.CommandText = @"
                 UPDATE sessions
                 SET expires_at_ms = $expires_at_ms, soon_notified_at_ms = NULL, updated_at_ms = $now_ms
@@ -198,7 +204,16 @@ sealed class SessionRepository
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$expires_at_ms", expiresAtMs);
             cmd.Parameters.AddWithValue("$now_ms", nowMs);
-            cmd.ExecuteNonQuery();
+            if (cmd.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException($"Active session {id} was not found for extension");
+            }
+            using var pending = conn.CreateCommand();
+            pending.Transaction = transaction;
+            pending.CommandText = "INSERT OR IGNORE INTO pending_router_sync(user_name) SELECT user_name FROM sessions WHERE id = $id";
+            pending.Parameters.AddWithValue("$id", id);
+            pending.ExecuteNonQuery();
+            transaction.Commit();
         }
     }
 
@@ -226,7 +241,9 @@ sealed class SessionRepository
         lock (_sync)
         {
             using var conn = OpenConnection();
+            using var transaction = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
             cmd.CommandText = @"
                 UPDATE sessions
                 SET ended_at_ms = $ended_at_ms, ended_reason = $reason, updated_at_ms = $now_ms
@@ -235,8 +252,62 @@ sealed class SessionRepository
             cmd.Parameters.AddWithValue("$ended_at_ms", endedAtMs);
             cmd.Parameters.AddWithValue("$reason", reason);
             cmd.Parameters.AddWithValue("$now_ms", nowMs);
-            return cmd.ExecuteNonQuery() > 0;
+            var ended = cmd.ExecuteNonQuery() > 0;
+            if (ended)
+            {
+                using var pending = conn.CreateCommand();
+                pending.Transaction = transaction;
+                pending.CommandText = "INSERT OR IGNORE INTO pending_router_sync(user_name) SELECT user_name FROM sessions WHERE id = $id";
+                pending.Parameters.AddWithValue("$id", id);
+                pending.ExecuteNonQuery();
+            }
+            transaction.Commit();
+            return ended;
         }
+    }
+
+    public void MarkRouterSyncPending(string userName)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var transaction = conn.BeginTransaction();
+            MarkRouterSyncPending(conn, transaction, userName);
+            transaction.Commit();
+        }
+    }
+
+    public bool HasPendingRouterSync(string userName)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM pending_router_sync WHERE user_name = $user_name";
+            cmd.Parameters.AddWithValue("$user_name", userName);
+            return Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
+        }
+    }
+
+    public void CompleteRouterSync(string userName)
+    {
+        lock (_sync)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM pending_router_sync WHERE user_name = $user_name";
+            cmd.Parameters.AddWithValue("$user_name", userName);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    private static void MarkRouterSyncPending(SqliteConnection conn, SqliteTransaction transaction, string userName)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = "INSERT OR IGNORE INTO pending_router_sync(user_name) VALUES ($user_name)";
+        cmd.Parameters.AddWithValue("$user_name", userName);
+        cmd.ExecuteNonQuery();
     }
 
     public List<AuditLogRecord> ListAuditEventsIntersectingRange(string userName, long rangeStartMs, long rangeEndMs, int limit)
@@ -341,6 +412,10 @@ sealed class SessionRepository
                   soon_notified_at_ms INTEGER,
                   created_at_ms INTEGER NOT NULL,
                   updated_at_ms INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS pending_router_sync (
+                  user_name TEXT PRIMARY KEY NOT NULL
                 );
 
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_active_user
